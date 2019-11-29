@@ -182,6 +182,19 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
             hosts.append(host['service_name'])
         pool.add_computehost(host_reservation['aggregate_id'], hosts)
 
+        for host in hosts:
+            for server in self.nova.servers.list(
+                    search_opts={"host": host, "all_tenants": 1}):
+                try:
+                    LOG.info('Terminating preemptible instance %s (%s)',
+                             server.name, server.id)
+                    self.nova.servers.delete(server=server)
+                except nova_exceptions.NotFound:
+                    LOG.info('Could not find server %s, may have been deleted '
+                             'concurrently.', server)
+                except Exception as e:
+                    LOG.exception('Failed to delete %s: %s.', server, str(e))
+
     def before_end(self, resource_id):
         """Take an action before the end of a lease."""
         host_reservation = db_api.host_reservation_get(resource_id)
