@@ -165,11 +165,13 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
         """Add the hosts in the pool."""
         host_reservation = db_api.host_reservation_get(resource_id)
         pool = nova.ReservationPool()
+        hosts = []
         for allocation in db_api.host_allocation_get_all_by_values(
                 reservation_id=host_reservation['reservation_id']):
             host = db_api.host_get(allocation['compute_host_id'])
             pool.add_computehost(host_reservation['aggregate_id'],
                                  host['service_name'])
+            hosts.append(host['service_name'])
 
         for host in hosts:
             for server in self.nova.servers.list(
