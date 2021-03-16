@@ -46,6 +46,10 @@ nova_opts = [
                deprecated_group=oshosts.RESOURCE_TYPE,
                help='Name of the special aggregate where all hosts '
                     'are candidate for physical host reservation'),
+    cfg.StrOpt('aggregate_preemptible_pool_name',
+               default='preemptibles',
+               help='Name of the special aggregate where all hosts '
+                    'are available for running preemptibles'),
     cfg.StrOpt('project_id_key',
                default='blazar:project',
                deprecated_group=oshosts.RESOURCE_TYPE,
@@ -119,15 +123,6 @@ class BlazarNovaClient(object):
                 ctx = context.current()
             except RuntimeError:
                 pass
-        if ctx is not None:
-            auth_token = auth_token or ctx.auth_token
-            endpoint_override = endpoint_override or \
-                base.url_for(ctx.service_catalog,
-                             CONF.nova.compute_service,
-                             os_region_name=CONF.os_region_name)
-            auth_url = base.url_for(ctx.service_catalog, CONF.identity_service,
-                                    os_region_name=CONF.os_region_name)
-            kwargs.setdefault('global_request_id', ctx.global_request_id)
 
         if auth_url is None:
             auth_url = "%s://%s:%s/%s" % (CONF.os_auth_protocol,

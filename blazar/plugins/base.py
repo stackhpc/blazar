@@ -31,6 +31,7 @@ class BasePlugin(object):
     description = None
     monitor = None
     query_options = None
+    periodic_events = None
 
     def get_plugin_opts(self):
         """Plugin can expose some options that should be specified in conf file
