@@ -2207,6 +2207,13 @@ class PhysicalHostPluginTestCase(tests.TestCase):
         self.fake_phys_plugin._check_params(values)
         self.assertEqual(values['before_end'], 'default')
 
+    def test_promote_hosts_to_preemptible_pool(self):
+        print(self.fake_phys_plugin)
+        self.fake_phys_plugin.promote_hosts_to_preemptible_pool()
+        self.assertEqual(['1'], self.fake_phys_plugin.foobar)
+        self.fake_phys_plugin.promote_hosts_to_preemptible_pool()
+        self.assertEqual(['1', '2'], self.fake_phys_plugin.foobar)
+
 
 class PhysicalHostMonitorPluginTestCase(tests.TestCase):
 

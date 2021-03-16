@@ -74,6 +74,16 @@ class ManagerService(service_utils.RPCServer):
         self.resource_actions = self._setup_actions()
         self.monitors = monitor.load_monitors(self.plugins)
         self.enforcement = enforcement.UsageEnforcement()
+        self.periodic_events = self.load_periodic_events(self.plugins)
+
+    def load_periodic_events(self, plugins):
+        periodic_events = []
+
+        for plugin in plugins.values():
+            if plugin.periodic_events:
+                periodic_events.extend(plugin.periodic_events)
+
+        return periodic_events
 
     def start(self):
         super(ManagerService, self).start()
@@ -157,26 +167,28 @@ class ManagerService(service_utils.RPCServer):
                               'border': datetime.datetime.utcnow()}}
         )
 
-        if not events:
-            return
-
-        LOG.info("Trying to execute events: %s", events)
-        for event in events:
-            if not status.LeaseStatus.is_stable(event['lease_id']):
-                LOG.info("Skip event %s because the status of the lease %s "
-                         "is still transitional", event, event['lease_id'])
-                continue
-            db_api.event_update(event['id'],
-                                {'status': status.event.IN_PROGRESS})
-            try:
-                eventlet.spawn_n(
-                    service_utils.with_empty_context(self._exec_event),
-                    event)
-            except Exception:
+        if events:
+            LOG.info("Trying to execute events: %s", events)
+            for event in events:
+                if not status.LeaseStatus.is_stable(event['lease_id']):
+                    LOG.info("Skip event %s because the status of the lease %s "
+                             "is still transitional", event, event['lease_id'])
+                    continue
                 db_api.event_update(event['id'],
-                                    {'status': status.event.ERROR})
-                LOG.exception('Error occurred while event %s handling.',
-                              event['id'])
+                                    {'status': status.event.IN_PROGRESS})
+                try:
+                    eventlet.spawn_n(
+                        service_utils.with_empty_context(self._exec_event),
+                        event)
+                except Exception:
+                    db_api.event_update(event['id'],
+                                        {'status': status.event.ERROR})
+                    LOG.exception('Error occurred while event %s handling.',
+                                  event['id'])
+
+        LOG.info("Executing registered periodic events")
+        for periodic_event in self.periodic_events:
+            periodic_event()
 
     def _exec_event(self, event):
         """Execute an event function"""
