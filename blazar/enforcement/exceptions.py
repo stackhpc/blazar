@@ -21,3 +21,9 @@ class MaxLeaseDurationException(exceptions.NotAuthorized):
     msg_fmt = _('Lease duration of %(lease_duration)s seconds must be less '
                 'than or equal to the maximum lease duration of '
                 '%(max_duration)s seconds.')
+
+
+class CloudCreditsException(exceptions.NotAuthorized):
+    code = 400
+    msg_fmt = _('Cloud credit balance of %(balance)s not high enough for '
+                'lease consuming %(requested)s cloud credits.')
