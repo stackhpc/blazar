@@ -21,3 +21,20 @@ class MaxLeaseDurationException(exceptions.NotAuthorized):
     msg_fmt = _('Lease duration of %(lease_duration)s seconds must be less '
                 'than or equal to the maximum lease duration of '
                 '%(max_duration)s seconds.')
+
+
+class DateConfigException(exceptions.BlazarException):
+    code = 500
+    msg_fmt = _('Invalid configuration for DateFilter')
+
+
+class StartDateException(exceptions.BlazarException):
+    code = 400
+    msg_fmt = _('Start date %(start_date)s is before minimum start date of '
+                '%(min_start_date)s')
+
+
+class EndDateException(exceptions.BlazarException):
+    code = 400
+    msg_fmt = _('End date %(end_date)s is after maximum end date of '
+                '%(max_end_date)s')
