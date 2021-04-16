@@ -15,7 +15,7 @@
 import uuid as uuidgen
 
 from keystoneauth1 import session
-from keystoneauth1 import token_endpoint
+from keystoneauth1.identity import v3
 import mock
 from novaclient import client as nova_client
 from novaclient import exceptions as nova_exceptions
@@ -45,10 +45,9 @@ class TestCNClient(tests.TestCase):
 
         self.ctx = self.patch(self.context, 'current')
         self.client = self.patch(self.n_client, 'Client')
-        self.auth = self.patch(token_endpoint, 'Token')
+        self.auth = self.patch(v3, 'Password')
         self.session = self.patch(session, 'Session')
-        self.url = 'http://fake.com/'
-        self.patch(self.base, 'url_for').return_value = self.url
+        self.region_name = 'FakeRegion'
 
         self.version = '2'
 
@@ -60,10 +59,6 @@ class TestCNClient(tests.TestCase):
         user_domain = 'User_Domain'
         project_name = 'admin'
         project_domain = 'Project_Domain'
-        auth_url = "%s://%s:%s/%s" % (CONF.os_auth_protocol,
-                                      CONF.os_auth_host,
-                                      CONF.os_auth_port,
-                                      CONF.os_auth_prefix)
 
         kwargs = {'version': self.version,
                   'endpoint_override': endpoint,
@@ -71,17 +66,14 @@ class TestCNClient(tests.TestCase):
                   'password': password,
                   'user_domain_name': user_domain,
                   'project_name': project_name,
-                  'project_domain_name': project_domain}
+                  'project_domain_name': project_domain,
+                  'region_name': self.region_name}
 
         self.nova.BlazarNovaClient(**kwargs)
 
         self.client.assert_called_once_with(version=self.version,
-                                            username=username,
-                                            password=password,
-                                            user_domain_name=user_domain,
-                                            project_name=project_name,
-                                            project_domain_name=project_domain,
-                                            auth_url=auth_url,
+                                            session=self.session.return_value,
+                                            region_name=self.region_name,
                                             endpoint_override=endpoint)
 
     def test_client_from_ctx(self):
@@ -89,12 +81,22 @@ class TestCNClient(tests.TestCase):
 
         self.nova.BlazarNovaClient(**kwargs)
 
-        self.auth.assert_called_once_with(self.url,
-                                          self.ctx().auth_token)
+        auth_url = "%s://%s:%s/%s/%s" % (CONF.os_auth_protocol,
+                                         CONF.os_auth_host,
+                                         CONF.os_auth_port,
+                                         CONF.os_auth_prefix,
+                                         CONF.os_auth_version)
+
+        self.auth.assert_called_once_with(auth_url=auth_url,
+                                          username=CONF.os_admin_username,
+                                          password=CONF.os_admin_password,
+                                          project_name=CONF.os_admin_project_name,
+                                          user_domain_name=CONF.os_admin_user_domain_name,
+                                          project_domain_name=CONF.os_admin_project_domain_name)
         self.session.assert_called_once_with(auth=self.auth.return_value)
         self.client.assert_called_once_with(version=self.version,
-                                            endpoint_override=self.url,
                                             session=self.session.return_value,
+                                            region_name=CONF.os_region_name,
                                             global_request_id=mock.ANY)
 
     def test_getattr(self):
