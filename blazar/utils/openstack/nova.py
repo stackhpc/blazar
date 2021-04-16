@@ -422,6 +422,13 @@ class ReservationPool(NovaClientWrapper):
 
 
 class NovaInventory(NovaClientWrapper):
+    def __init__(self):
+        super(NovaInventory, self).__init__(
+            username=CONF.os_admin_username,
+            password=CONF.os_admin_password,
+            user_domain_name=CONF.os_admin_user_domain_name,
+            project_name=CONF.os_admin_project_name,
+            project_domain_name=CONF.os_admin_project_domain_name)
 
     def get_host_details(self, host):
         """Get Nova capabilities of a single host
