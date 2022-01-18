@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from blazar.enforcement.filters.cloud_credits_filter import CloudCreditsFilter
 from blazar.enforcement.filters.date_filter import DateFilter
 from blazar.enforcement.filters.max_lease_duration_filter import (
     MaxLeaseDurationFilter)
 
-__all__ = ['DateFilter', 'MaxLeaseDurationFilter']
+__all__ = ['CloudCreditsFilter', 'DateFilter', 'MaxLeaseDurationFilter']
 
 all_filters = __all__
