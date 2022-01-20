@@ -77,6 +77,16 @@ class ManagerService(service_utils.RPCServer):
         self.resource_actions = self._setup_actions()
         self.monitors = monitor.load_monitors(self.plugins)
         self.enforcement = enforcement.UsageEnforcement()
+        self.periodic_tasks = self.load_periodic_tasks(self.plugins)
+
+    def load_periodic_tasks(self, plugins):
+        periodic_tasks = []
+
+        for plugin in plugins.values():
+            if plugin.periodic_tasks:
+                periodic_tasks.extend(plugin.periodic_tasks)
+
+        return periodic_tasks
 
     def start(self):
         super(ManagerService, self).start()
@@ -241,6 +251,13 @@ class ManagerService(service_utils.RPCServer):
 
         for batch in self._select_for_execution(events):
             self._process_events_concurrently(batch)
+
+        LOG.info("Executing periodic tasks")
+        for task in self.periodic_tasks:
+            try:
+                task()
+            except Exception:
+                LOG.exception('Error occurred while executing task %s', task)
 
     def _exec_event(self, event):
         """Execute an event function"""
