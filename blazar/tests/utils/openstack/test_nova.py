@@ -86,7 +86,7 @@ class TestCNClient(tests.TestCase):
                                             endpoint_override=endpoint)
 
     def test_client_from_ctx(self):
-        kwargs = {'version': self.version}
+        kwargs = {'ctx': self.ctx(), 'version': self.version}
 
         self.nova.BlazarNovaClient(**kwargs)
 
