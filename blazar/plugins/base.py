@@ -29,6 +29,7 @@ class BasePlugin(object, metaclass=abc.ABCMeta):
     description = None
     monitor = None
     query_options = None
+    periodic_tasks = None
 
     def get_plugin_opts(self):
         """Plugin can expose some options that should be specified in conf file
