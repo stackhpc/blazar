@@ -120,11 +120,6 @@ class BlazarNovaClient(object):
         project_domain_name = kwargs.pop('project_domain_name', None)
         auth_url = kwargs.pop('auth_url', None)
 
-        if ctx is None:
-            try:
-                ctx = context.current()
-            except RuntimeError:
-                pass
         if ctx is not None:
             auth_token = auth_token or ctx.auth_token
             endpoint_override = endpoint_override or \
