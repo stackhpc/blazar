@@ -52,6 +52,10 @@ nova_opts = [
                deprecated_group=oshosts.RESOURCE_TYPE,
                help='Name of the special aggregate where all hosts '
                     'are candidate for physical host reservation'),
+    cfg.StrOpt('aggregate_preemptible_pool_name',
+               default='preemptibles',
+               help='Name of the special aggregate where all hosts '
+                    'are available for running preemptibles'),
     cfg.StrOpt('project_id_key',
                default='blazar:project',
                deprecated_group=oshosts.RESOURCE_TYPE,

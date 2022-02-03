@@ -1850,9 +1850,17 @@ class PhysicalHostPluginTestCase(tests.TestCase):
         add_computehost = self.patch(
             self.nova.ReservationPool, 'add_computehost')
 
+        preempt1 = mock.MagicMock(name='preempt1', id='e937ca58-2b91-47f1-809f-542112af4c8f')
+        list_servers = self.patch(self.ServerManager, 'list')
+        list_servers.return_value = [preempt1]
+        delete_server = self.patch(self.ServerManager, 'delete')
+
         self.fake_phys_plugin.on_start('04de74e8-193a-49d2-9ab8-cba7b49e45e8')
 
         add_computehost.assert_called_with(1, ['host1_hostname'])
+        list_servers.assert_called_with(search_opts={'host': 'host1_hostname',
+                                                     'all_tenants': 1})
+        delete_server.assert_called_with(server=preempt1)
 
     def test_before_end_with_no_action(self):
         host_reservation_get = self.patch(self.db_api, 'host_reservation_get')

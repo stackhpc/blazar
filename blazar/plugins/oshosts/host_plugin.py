@@ -81,6 +81,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
     title = 'Physical Host Plugin'
     description = 'This plugin starts and shutdowns the hosts.'
     freepool_name = CONF.nova.aggregate_freepool_name
+    preemptible_pool_name = CONF.nova.aggregate_preemptible_pool_name
     pool = None
     query_options = {
         QUERY_TYPE_ALLOCATION: ['lease_id', 'reservation_id']
@@ -96,6 +97,112 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
         self.monitor = PhysicalHostMonitorPlugin()
         self.monitor.register_healing_handler(self.heal_reservations)
         self.placement_client = placement.BlazarPlacementClient()
+        self.periodic_tasks = [
+            self.promote_hosts_to_preemptible_pool,
+            self.retrieve_hosts_from_preemptible_pool,
+            self.stop_preemptibles_task,
+        ]
+
+    def _get_start_events_from_alloc(self, allocation):
+        reservation = db_api.reservation_get(allocation['reservation_id'])
+        lease = db_api.lease_get(reservation['lease_id'])
+        events = db_api.event_get_all_sorted_by_filters(
+            sort_key='time',
+            sort_dir='asc',
+            filters={'status': status.event.UNDONE,
+                     'event_type': 'start_lease',
+                     'lease_id': lease['id'],
+                     'time': {'op': 'ge',
+                              'border': datetime.datetime.utcnow()}}
+        )
+        return events
+
+    def _shutdown_instances_on_host(self, host):
+        for server in self.nova.servers.list(
+                search_opts={"host": host, "all_tenants": 1,
+                             "status": "active"}):
+            try:
+                self.nova.servers.stop(server=server)
+            except nova_exceptions.NotFound:
+                LOG.info('Could not find server %s, may have been deleted '
+                         'concurrently.', server)
+            except Exception as e:
+                LOG.exception('Failed to stop %s: %s.', server, str(e))
+
+    def stop_preemptibles_task(self):
+        LOG.info("Calling soft_shutdown_preemptibles")
+        pool = nova.ReservationPool()
+        for host in pool.get_computehosts(self.freepool_name):
+            blazar_host = db_api.host_get_all_by_queries(
+                ['service_name == %s' % host])[0]
+            host_id = blazar_host['id']
+
+            allocs = db_api.host_allocation_get_all_by_values(
+                compute_host_id=host_id)
+            for allocation in allocs:
+                events = self._get_start_events_from_alloc(allocation)
+                if not events:
+                    return
+
+                first_event = events[0]
+                LOG.info("first_event = %s", first_event)
+                # This is the first start_lease event for this host
+                # If it is happening before X minutes, shut down the instance
+                if first_event['time'] <= (datetime.datetime.utcnow() +
+                                           datetime.timedelta(minutes=5)):
+                    self._shutdown_instances_on_host(host)
+
+    def retrieve_hosts_from_preemptible_pool(self):
+        pool = nova.ReservationPool()
+        for host in pool.get_computehosts(self.preemptible_pool_name):
+            blazar_host = db_api.host_get_all_by_queries(
+                ['service_name == %s' % host])[0]
+            host_id = blazar_host['id']
+
+            allocs = db_api.host_allocation_get_all_by_values(
+                compute_host_id=host_id)
+            for allocation in allocs:
+                events = self._get_start_events_from_alloc(allocation)
+                if not events:
+                    return
+
+                first_event = events[0]
+                # This is the first start_lease event for this host
+                # If it is beyond one hour, move the host to the
+                # preemptible pool
+                if first_event['time'] <= (datetime.datetime.utcnow() +
+                                           datetime.timedelta(hours=1)):
+                    pool = nova.ReservationPool()
+                    pool.remove_computehost(self.preemptible_pool_name, [host])
+
+    def promote_hosts_to_preemptible_pool(self):
+        pool = nova.ReservationPool()
+        for host in pool.get_computehosts(self.freepool_name):
+            blazar_host = db_api.host_get_all_by_queries(
+                ['service_name == %s' % host])[0]
+            host_id = blazar_host['id']
+
+            allocs = db_api.host_allocation_get_all_by_values(
+                compute_host_id=host_id)
+            for allocation in allocs:
+                events = self._get_start_events_from_alloc(allocation)
+                if not events:
+                    return
+
+                first_event = events[0]
+                # This is the first event for this host: if it is a
+                # start_lease and it is beyond one hour, move the host to
+                # the preemptible pool
+                if (first_event['event_type'] == 'start_lease' and
+                    first_event['time'] > (datetime.datetime.utcnow() +
+                                           datetime.timedelta(hours=1))):
+                    LOG.info("Moving host %s to preemptible pool", host)
+                    pool.add_computehost(self.preemptible_pool_name, [host])
+
+            if not allocs:
+                # No allocation for this host means no reservation uses it
+                LOG.info("Moving host %s to preemptible pool", host)
+                pool.add_computehost(self.preemptible_pool_name, [host])
 
     def reserve_resource(self, reservation_id, values):
         """Create reservation."""
@@ -173,7 +280,20 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 reservation_id=host_reservation['reservation_id']):
             host = db_api.host_get(allocation['compute_host_id'])
             hosts.append(host['service_name'])
+        for host in hosts:
+            for server in self.nova.servers.list(
+                    search_opts={"host": host, "all_tenants": 1}):
+                try:
+                    LOG.info('Terminating preemptible instance %s (%s)',
+                             server.name, server.id)
+                    self.nova.servers.delete(server=server)
+                except nova_exceptions.NotFound:
+                    LOG.info('Could not find server %s, may have been deleted '
+                             'concurrently.', server)
+                except Exception as e:
+                    LOG.exception('Failed to delete %s: %s.', server, str(e))
         pool.add_computehost(host_reservation['aggregate_id'], hosts)
+
 
     def before_end(self, resource_id):
         """Take an action before the end of a lease."""
