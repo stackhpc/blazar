@@ -179,6 +179,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         return hosts_allocs
 
     def query_available_hosts(self, cpus=None, memory=None, disk=None,
+                              custom_resources=None,
                               resource_properties=None,
                               start_date=None, end_date=None,
                               excludes_res=None):
@@ -207,6 +208,21 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             filters += plugins_utils.convert_requirements(resource_properties)
 
         hosts = db_api.reservable_host_get_all_by_queries(filters)
+        # Remove hosts without the required custom resources
+        if custom_resources:
+            cr_hosts = []
+            for req in custom_resources.split(','):
+                rc, amount = req.split(':')
+                for host in hosts:
+                    host_crs = db_api.host_custom_resource_get_all_per_host(
+                        host['id'])
+                    for cr in host_crs:
+                        if cr['resource_class'] == rc:
+                            if cr['units'] >= int(amount):
+                                cr_hosts.append(host)
+
+            hosts = cr_hosts
+
         free_hosts, reserved_hosts = self.filter_hosts_by_reservation(
             hosts,
             start_date - datetime.timedelta(minutes=CONF.cleaning_time),
@@ -240,6 +256,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'cpus': values['vcpus'],
             'memory': values['memory_mb'],
             'disk': values['disk_gb'],
+            'custom_resources': values['custom_resources'],
             'resource_properties': values['resource_properties'],
             'start_date': values['start_date'],
             'end_date': values['end_date']
@@ -311,7 +328,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         return {'added': added_host_ids, 'removed': removed_host_ids}
 
-    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id):
+    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id,
+                       resources=None, pci_aliases=None):
         flavor_details = {
             'flavorid': reservation_id,
             'name': RESERVATION_PREFIX + ":" + reservation_id,
@@ -330,11 +348,20 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             "affinity_id": group_id,
             reservation_rc: "1"
             }
+
+        # Set any required custom resource classes
+        for cr in resources or []:
+            extra_specs["resources:%s" % cr['name']] = cr['value']
+
+        # Set PCI aliases for passthrough
+        if pci_aliases:
+            extra_specs["pci_passthrough:alias"] = ','.join(pci_aliases)
+
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
 
-    def _create_resources(self, inst_reservation):
+    def _create_resources(self, inst_reservation, custom_resources):
         reservation_id = inst_reservation['reservation_id']
 
         ctx = context.current()
@@ -345,11 +372,23 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'affinity' if inst_reservation['affinity'] else 'anti-affinity'
             )
 
+        resources = []
+        pci_aliases = []
+        for req in custom_resources.split(','):
+            resource_class, amount = req.split(':')
+            resources.append({'name': resource_class, 'value': amount})
+            # Specify PCI aliases necessary for PCI passthrough
+            alias = resource_class.split('CUSTOM_PCI_')
+            alias = alias[1].lower() if alias != resource_class else None
+            pci_aliases.append('%s:%s' % (alias, amount))
+
         reserved_flavor = self._create_flavor(reservation_id,
                                               inst_reservation['vcpus'],
                                               inst_reservation['memory_mb'],
                                               inst_reservation['disk_gb'],
-                                              reserved_group.id)
+                                              reserved_group.id,
+                                              resources=resources,
+                                              pci_aliases=pci_aliases)
 
         pool = nova.ReservationPool()
         pool_metadata = {
@@ -446,6 +485,15 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                     not strutils.is_valid_boolstr(values['affinity'])):
                 raise mgr_exceptions.MalformedParameter(
                     param='affinity (must be a bool value or None)')
+#        if 'custom_resources' in values:
+#            cr = values['custom_resources']
+#            if not isinstance(cr, list):
+#                raise mgr_exceptions.MalformedParameter(
+#                    param='custom_resources (must be a list of dict)')
+#            for e in cr:
+#                if not isinstance(e, dict):
+#                    raise mgr_exceptions.MalformedParameter(
+#                        param='custom_resources (must be a list of dict)')
 
     def reserve_resource(self, reservation_id, values):
         self._check_missing_reservation_params(values)
@@ -460,7 +508,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'disk_gb': values['disk_gb'],
             'amount': values['amount'],
             'affinity': bool_from_string(values['affinity'], default=None),
-            'resource_properties': values['resource_properties']
+            'resource_properties': values['resource_properties'],
+            'custom_resources': values.get('custom_resources', None),
             }
         instance_reservation = db_api.instance_reservation_create(
             instance_reservation_val)
@@ -470,7 +519,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                           'reservation_id': reservation_id})
 
         try:
-            flavor, group, pool = self._create_resources(instance_reservation)
+            flavor, group, pool = self._create_resources(
+                instance_reservation, values.get('custom_resources', []))
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)

@@ -469,6 +469,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise manager_ex.HostHavingServers(host=host_ref,
                                                    servers=servers)
             host_details = inventory.get_host_details(host_ref)
+            hostname = host_details['hypervisor_hostname']
             # NOTE(sbauza): Only last duplicate name for same extra capability
             # will be stored
             to_store = set(host_values.keys()) - set(host_details.keys())
@@ -480,8 +481,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
             if any([len(key) > 64 for key in extra_capabilities_keys]):
                 raise manager_ex.ExtraCapabilityTooLong()
 
-            self.placement_client.create_reservation_provider(
-                host_details['hypervisor_hostname'])
+            self.placement_client.create_reservation_provider(hostname)
 
             pool = nova.ReservationPool()
             pool.add_computehost(self.freepool_name,
@@ -499,8 +499,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 # transactions
                 pool.remove_computehost(self.freepool_name,
                                         host_details['service_name'])
-                self.placement_client.delete_reservation_provider(
-                    host_details['hypervisor_hostname'])
+                self.placement_client.delete_reservation_provider(hostname)
                 raise e
             for key in extra_capabilities:
                 values = {'computehost_id': host['id'],
@@ -515,6 +514,24 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise manager_ex.CantAddExtraCapability(
                     keys=cantaddextracapability,
                     host=host['id'])
+
+            # Check for any custom resource classes
+            rp = self.placement_client.get_resource_provider(hostname)
+            if rp is None:
+                raise manager_ex.ResourceProviderNotFound(host=hostname)
+            inventories = self.placement_client.get_inventory(rp['uuid'])
+            for rc, inventory in inventories['inventories'].items():
+                if rc.startswith('CUSTOM_'):
+                    alias = rc.split('CUSTOM_PCI_')
+                    alias = alias[1].lower() if alias != rc else None
+                    cr = {
+                        'computehost_id': host['id'],
+                        'resource_class': rc,
+                        'pci_alias': alias,
+                        'units': inventory['max_unit'],
+                    }
+                    db_api.host_custom_resource_create(cr)
+
             return self.get_computehost(host['id'])
 
     def is_updatable_extra_capability(self, capability):

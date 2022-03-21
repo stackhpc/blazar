@@ -187,8 +187,9 @@ class InstanceReservations(mb.BlazarBase):
     memory_mb = sa.Column(sa.Integer, nullable=False)
     disk_gb = sa.Column(sa.Integer, nullable=False)
     amount = sa.Column(sa.Integer, nullable=False)
-    affinity = sa.Column(sa.Boolean, nullable=False)
+    affinity = sa.Column(sa.Boolean, nullable=True)
     resource_properties = sa.Column(MediumText(), nullable=True)
+    custom_resources = sa.Column(MediumText(), nullable=True)
     flavor_id = sa.Column(sa.String(36), nullable=True)
     aggregate_id = sa.Column(sa.Integer, nullable=True)
     server_group_id = sa.Column(sa.String(36), nullable=True)
@@ -236,9 +237,26 @@ class ComputeHost(mb.BlazarBase):
                                                   cascade="all,delete",
                                                   backref='computehost',
                                                   lazy='joined')
+    computehost_custom_resources = relationship('ComputeHostCustomResource',
+                                                cascade="all,delete",
+                                                backref='computehost',
+                                                lazy='joined')
 
     def to_dict(self):
         return super(ComputeHost, self).to_dict()
+
+
+class ComputeHostCustomResource(mb.BlazarBase):
+    __tablename__ = 'computehost_custom_resources'
+
+    id = _id_column()
+    computehost_id = sa.Column(sa.String(36), sa.ForeignKey('computehosts.id'))
+    resource_class = sa.Column(sa.String(255), nullable=False)
+    pci_alias = sa.Column(sa.String(255), nullable=True)
+    units = sa.Column(sa.Integer, nullable=False)
+
+    def to_dict(self):
+        return super(ComputeHostCustomResource, self).to_dict()
 
 
 class ComputeHostExtraCapability(mb.BlazarBase):

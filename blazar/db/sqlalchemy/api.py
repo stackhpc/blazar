@@ -754,6 +754,38 @@ def host_destroy(host_id):
         session.delete(host)
 
 
+# ComputeHostCustomResource
+
+def host_custom_resource_create(values):
+    values = values.copy()
+
+    custom_resource = models.ComputeHostCustomResource()
+    custom_resource.update(values)
+
+    session = get_session()
+    with session.begin():
+        try:
+            custom_resource.save(session=session)
+        except common_db_exc.DBDuplicateEntry as e:
+            # raise exception about duplicated columns (e.columns)
+            raise db_exc.BlazarDBDuplicateEntry(
+                model=custom_resource.__class__.__name__,
+                columns=e.columns)
+
+    return None
+
+
+def _host_custom_resource_get_all_per_host(session, host_id):
+    query = model_query(models.ComputeHostCustomResource, session)
+    LOG.info(query)
+    return query.filter_by(computehost_id=host_id)
+
+
+def host_custom_resource_get_all_per_host(host_id):
+    return _host_custom_resource_get_all_per_host(get_session(),
+                                                  host_id).all()
+
+
 # ComputeHostExtraCapability
 def _host_extra_capability_get(session, host_extra_capability_id):
     query = model_query(models.ComputeHostExtraCapability, session)
