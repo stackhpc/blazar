@@ -60,6 +60,10 @@ class HostNotFound(exceptions.NotFound):
     msg_fmt = _("Host '%(host)s' not found!")
 
 
+class ResourceProviderNotFound(exceptions.NotFound):
+    msg_fmt = _("Resource provider for host '%(host)s' not found!")
+
+
 class InvalidHost(exceptions.NotAuthorized):
     msg_fmt = _("Invalid values for host %(host)s")
 
