@@ -65,6 +65,14 @@ plugin_opts = [
                help='Interval (minutes) of reservation healing. '
                     'If 0 is specified, the interval is infinite and all the '
                     'reservations in the future is healed at one time.'),
+    cfg.IntOpt('minimum_preemptible_lifetime',
+               default=3600,
+               min=0,
+               help='Minimum lifetime guaranteed for preemptible instances.'),
+    cfg.IntOpt('preemptible_shutdown_notice',
+               default=300,
+               min=0,
+               help='Soft shutdown notice sent to preemptible instances.'),
 ]
 
 CONF = cfg.CONF
@@ -131,8 +139,8 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 LOG.exception('Failed to stop %s: %s.', server, str(e))
 
     def stop_preemptibles_task(self):
-        LOG.info("Calling soft_shutdown_preemptibles")
         pool = nova.ReservationPool()
+        shutdown_notice = CONF[self.resource_type].preemptible_shutdown_notice
         for host in pool.get_computehosts(self.freepool_name):
             blazar_host = db_api.host_get_all_by_queries(
                 ['service_name == %s' % host])[0]
@@ -146,15 +154,15 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                     return
 
                 first_event = events[0]
-                LOG.info("first_event = %s", first_event)
                 # This is the first start_lease event for this host
                 # If it is happening before X minutes, shut down the instance
                 if first_event['time'] <= (datetime.datetime.utcnow() +
-                                           datetime.timedelta(minutes=5)):
+                                           datetime.timedelta(seconds=shutdown_notice)):
                     self._shutdown_instances_on_host(host)
 
     def retrieve_hosts_from_preemptible_pool(self):
         pool = nova.ReservationPool()
+        min_preempt_time = CONF[self.resource_type].minimum_preemptible_lifetime
         for host in pool.get_computehosts(self.preemptible_pool_name):
             blazar_host = db_api.host_get_all_by_queries(
                 ['service_name == %s' % host])[0]
@@ -168,16 +176,17 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                     return
 
                 first_event = events[0]
-                # This is the first start_lease event for this host
-                # If it is beyond one hour, move the host to the
+                # This is the first start_lease event for this host If it is
+                # beyond minimum preemptible time, move the host to the
                 # preemptible pool
                 if first_event['time'] <= (datetime.datetime.utcnow() +
-                                           datetime.timedelta(hours=1)):
+                                           datetime.timedelta(seconds=min_preempt_time)):
                     pool = nova.ReservationPool()
                     pool.remove_computehost(self.preemptible_pool_name, [host])
 
     def promote_hosts_to_preemptible_pool(self):
         pool = nova.ReservationPool()
+        min_preempt_time = CONF[self.resource_type].minimum_preemptible_lifetime
         for host in pool.get_computehosts(self.freepool_name):
             blazar_host = db_api.host_get_all_by_queries(
                 ['service_name == %s' % host])[0]
@@ -196,7 +205,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 # the preemptible pool
                 if (first_event['event_type'] == 'start_lease' and
                     first_event['time'] > (datetime.datetime.utcnow() +
-                                           datetime.timedelta(hours=1))):
+                                           datetime.timedelta(seconds=min_preempt_time))):
                     LOG.info("Moving host %s to preemptible pool", host)
                     pool.add_computehost(self.preemptible_pool_name, [host])
 
@@ -294,7 +303,6 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 except Exception as e:
                     LOG.exception('Failed to delete %s: %s.', server, str(e))
         pool.add_computehost(host_reservation['aggregate_id'], hosts)
-
 
     def before_end(self, resource_id):
         """Take an action before the end of a lease."""
