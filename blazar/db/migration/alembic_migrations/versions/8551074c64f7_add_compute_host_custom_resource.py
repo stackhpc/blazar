@@ -16,14 +16,14 @@
 """add compute host custom resource
 
 Revision ID: 8551074c64f7
-Revises: 02e2f2186d98
+Revises: f4084140f608
 Create Date: 2022-03-21 15:06:04.917411
 
 """
 
 # revision identifiers, used by Alembic.
 revision = '8551074c64f7'
-down_revision = '02e2f2186d98'
+down_revision = 'f4084140f608'
 
 from alembic import op
 import sqlalchemy as sa
