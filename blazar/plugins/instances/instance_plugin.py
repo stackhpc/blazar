@@ -186,6 +186,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def query_available_hosts(self, cpus=None, memory=None, disk=None,
                               resource_properties=None,
+                              resource_inventory=None,
+                              resource_traits=None,
                               start_date=None, end_date=None,
                               excludes_res=None):
         """Returns a list of available hosts for a reservation.
@@ -213,6 +215,26 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             filters += plugins_utils.convert_requirements(resource_properties)
 
         hosts = db_api.reservable_host_get_all_by_queries(filters)
+        # TODO(johngarbutt) can we change to do this via the DB?!
+        # Remove hosts without the required custom resources
+        if resource_inventory:
+            cr_hosts = []
+            for req in resource_inventory.split(','):
+                rc, amount = req.split(':')
+                for host in hosts:
+                    # TODO(johngarbutt): the join means we should have
+                    # already got this from the previous query?
+                    host_crs = db_api.host_custom_resource_get_all_per_host(
+                        host['id'])
+                    for cr in host_crs:
+                        if cr['resource_class'] == rc:
+                            if cr['units'] >= int(amount):
+                                cr_hosts.append(host)
+            hosts = cr_hosts
+        if resource_traits:
+            # TODO(johngarbutt) filter out traits
+            pass
+
         free_hosts, reserved_hosts = self.filter_hosts_by_reservation(
             hosts,
             start_date - datetime.timedelta(minutes=CONF.cleaning_time),
@@ -242,11 +264,28 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         req_amount = values['amount']
         affinity = bool_from_string(values['affinity'], default=None)
 
+        # Look up flavor to get the reservation details
+        flavor_id = values.get('flavor_id')
+        if flavor_id:
+            user_client = nova.NovaClientWrapper()
+            flavor = user_client.nova.nova.flavor.get(flavor_id)
+            flavor_details = flavor.to_dict()
+            values['cpus'] = int(flavor_details['vcpus'])
+            values['memory_mb'] = int(flavor_details['ram'])
+            values['disk_gb'] = (
+                int(flavor_details['disk']) +
+                int(flavor_details['OS-FLV-EXT-DATA:ephemeral']))
+            # TODO(johngarbutt) make use of extra_specs
+            # extra_specs = flavor.get_keys()
+            values['resource_properties'] = {}
+
         query_params = {
             'cpus': values['vcpus'],
             'memory': values['memory_mb'],
             'disk': values['disk_gb'],
             'resource_properties': values['resource_properties'],
+            'resource_inventory': values['resource_inventory'],
+            'resource_traits': values['resource_traits'],
             'start_date': values['start_date'],
             'end_date': values['end_date']
             }
@@ -317,7 +356,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         return {'added': added_host_ids, 'removed': removed_host_ids}
 
-    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id):
+    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id,
+                       resources=None):
         flavor_details = {
             'flavorid': reservation_id,
             'name': RESERVATION_PREFIX + ":" + reservation_id,
@@ -336,11 +376,15 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             "affinity_id": group_id,
             reservation_rc: "1"
             }
+        # Set any required custom resource classes
+        for cr in resources or []:
+            extra_specs["resources:%s" % cr['name']] = cr['value']
+        # TODO(johngarbutt) and required/forbidden traits?
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
 
-    def _create_resources(self, inst_reservation):
+    def _create_resources(self, inst_reservation, resource_inventory):
         reservation_id = inst_reservation['reservation_id']
 
         ctx = context.current()
@@ -351,11 +395,18 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'affinity' if inst_reservation['affinity'] else 'anti-affinity'
             )
 
+        resources = []
+        for req in resource_inventory.split(','):
+            resource_class, amount = req.split(':')
+            resources.append({'name': resource_class, 'value': amount})
+        # TODO(johngarbutt): traits and pci alias!?
+
         reserved_flavor = self._create_flavor(reservation_id,
                                               inst_reservation['vcpus'],
                                               inst_reservation['memory_mb'],
                                               inst_reservation['disk_gb'],
-                                              reserved_group.id)
+                                              reserved_group.id,
+                                              resources=resources)
 
         pool = nova.ReservationPool()
         pool_metadata = {
@@ -421,6 +472,13 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         else:
             try:
                 self.nova.nova.flavors.delete(reservation['id'])
+                # TODO(johngarbutt): get inventory?
+                resource_inventory = ""
+                resources = []
+                for req in resource_inventory.split(','):
+                    resource_class, amount = req.split(':')
+                    resources.append({'name': resource_class, 'value': amount})
+                # TODO(johngarbutt): traits and pci alias!?
                 self._create_flavor(reservation['id'],
                                     reservation['vcpus'],
                                     reservation['memory_mb'],
@@ -432,9 +490,15 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise mgr_exceptions.NovaClientError()
 
     def _check_missing_reservation_params(self, values):
-        marshall_attributes = set(['vcpus', 'memory_mb', 'disk_gb',
-                                   'amount', 'affinity',
-                                   'resource_properties'])
+        marshall_attributes = set(['amount', 'affinity'])
+        # TODO(johngarbutt): do we want a config to require
+        # flavor_id and reject other requests, or an enforcer?
+        # if flavor_id is present, we ignore the components
+        # if flavor_id is not present, we require the components
+        if "flavor_id" not in values.keys():
+            marshall_attributes = marshall_attributes.union(
+                ['vcpus', 'memory_mb', 'disk_gb', 'resource_properties'])
+
         missing_attr = marshall_attributes - set(values.keys())
         if missing_attr:
             raise mgr_exceptions.MissingParameter(param=','.join(missing_attr))
@@ -459,6 +523,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         hosts = self.pickup_hosts(reservation_id, values)
 
+        # TODO(johngarbutt): need the flavor resource_inventory stuff here
         instance_reservation_val = {
             'reservation_id': reservation_id,
             'vcpus': values['vcpus'],
