@@ -417,10 +417,12 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         ctx = context.current()
         user_client = nova.NovaClientWrapper()
 
-        reserved_group = user_client.nova.server_groups.create(
-            RESERVATION_PREFIX + ':' + reservation_id,
-            'affinity' if inst_reservation['affinity'] else 'anti-affinity'
-            )
+        #reserved_group = user_client.nova.server_groups.create(
+        #    RESERVATION_PREFIX + ':' + reservation_id,
+        #    'affinity' if inst_reservation['affinity'] else 'anti-affinity'
+        #    )
+        # TODO this should be optional!!
+        reserved_group = "asdf134"
 
         resources = []
         for req in resource_inventory.split(','):
