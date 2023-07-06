@@ -268,9 +268,11 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         flavor_id = values.get('flavor_id')
 
         # hack to get flavor from resource_properties!!
-        if not flavor_id and values['resource_properties'] and "flavor" == values['resource_properties'][0]:
-            flavor_id = values['resource_properties'][1]
-            values['resource_properties'] = []
+        if not flavor_id and values['resource_properties'] and "flavor" in values['resource_properties']:
+            from oslo_serialization import jsonutils
+            requirements = jsonutils.loads(values['resource_properties'])
+            flavor_id = requirements[1]
+            values['resource_properties'] = ""
 
         if flavor_id:
             user_client = nova.NovaClientWrapper()
