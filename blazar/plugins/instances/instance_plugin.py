@@ -278,16 +278,32 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             user_client = nova.NovaClientWrapper()
             flavor = user_client.nova.nova.flavors.get(flavor_id)
             flavor_details = flavor.to_dict()
-            values['cpus'] = int(flavor_details['vcpus'])
+            values['vcpus'] = int(flavor_details['vcpus'])
             values['memory_mb'] = int(flavor_details['ram'])
             values['disk_gb'] = (
                 int(flavor_details['disk']) +
                 int(flavor_details['OS-FLV-EXT-DATA:ephemeral']))
-            # TODO(johngarbutt) make use of extra_specs
-            LOG.error(flavor_details)
-            extra_specs = flavor.get_keys()
-            LOG.error(extra_specs)
 
+            # TODO(johngarbutt): use newer api to get this above
+            extra_specs = flavor.get_keys()
+            LOG.debug(extra_specs)
+
+            # check for pcpus
+            resource_inventory = {}
+            hw_cpu_policy = extra_specs.get("hw:cpu_policy")
+            if hw_cpu_policy == "dedicated":
+                values['vcpus'] = 0
+                # TODO request PCPUs!
+                resource_inventory["PCPU"] = flavor_details['vcpus']
+            LOG.debug(resource_inventory)
+
+            required_traits = []
+            for key, value in extra_specs.items():
+                if key.startswith("trait:"):
+                    trait = key.split(":")[1]
+                    if value == "required":
+                        required_traits += trait
+            LOG.debug(required_traits)
 
         query_params = {
             'cpus': values['vcpus'],
