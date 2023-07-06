@@ -276,7 +276,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         if flavor_id:
             user_client = nova.NovaClientWrapper()
-            flavor = user_client.nova.nova.flavor.get(flavor_id)
+            flavor = user_client.nova.nova.flavors.get(flavor_id)
             flavor_details = flavor.to_dict()
             values['cpus'] = int(flavor_details['vcpus'])
             values['memory_mb'] = int(flavor_details['ram'])
