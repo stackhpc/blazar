@@ -425,9 +425,10 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reserved_group = "asdf134"
 
         resources = []
-        for req in resource_inventory.split(','):
-            resource_class, amount = req.split(':')
-            resources.append({'name': resource_class, 'value': amount})
+        if resource_inventory:
+            for req in resource_inventory.split(','):
+                resource_class, amount = req.split(':')
+                resources.append({'name': resource_class, 'value': amount})
         # TODO(johngarbutt): traits and pci alias!?
 
         reserved_flavor = self._create_flavor(reservation_id,
