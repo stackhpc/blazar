@@ -416,10 +416,6 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                     'max_unit': inventory['max_unit'],
                     'min_unit': inventory['min_unit'],
                 }
-                if rc.startswith('CUSTOM_PCI_'):
-                    alias = rc.split('CUSTOM_PCI_')
-                    alias = alias[1].lower()
-                    cr['pci_alias'] = alias
                 db_api.host_custom_resource_create(cr)
 
             traits = self.placement_client.get_traits(rp['uuid'])
