@@ -284,7 +284,10 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 int(flavor_details['disk']) +
                 int(flavor_details['OS-FLV-EXT-DATA:ephemeral']))
             # TODO(johngarbutt) make use of extra_specs
-            # extra_specs = flavor.get_keys()
+            LOG.error(flavor_details)
+            extra_specs = flavor.get_keys()
+            LOG.error(extra_specs)
+
 
         query_params = {
             'cpus': values['vcpus'],
