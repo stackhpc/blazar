@@ -400,6 +400,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
             rp = self.placement_client.get_resource_provider(hostname)
             if rp is None:
                 raise manager_ex.ResourceProviderNotFound(host=hostname)
+
             inventories = self.placement_client.get_inventory(rp['uuid'])
             for rc, inventory in inventories['inventories'].items():
                 reserved = int(inventory['reserved'])
@@ -420,6 +421,10 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                     alias = alias[1].lower()
                     cr['pci_alias'] = alias
                 db_api.host_custom_resource_create(cr)
+
+            traits = self.placement_client.get_traits(rp['uuid'])
+            for trait in traits['traits']:
+                LOG.info(trait)
 
             return self.get_computehost(host['id'])
 
