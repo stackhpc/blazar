@@ -343,11 +343,13 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         with trusts.create_ctx_from_trust(trust_id):
             inventory = nova.NovaInventory()
-            servers = inventory.get_servers_per_host(host_ref)
-            if servers:
-                raise manager_ex.HostHavingServers(host=host_ref,
-                                                   servers=servers)
+            # TODO(johngarbutt): hack to work around full hypervisors!
+            #servers = inventory.get_servers_per_host(host_ref)
+            #if servers:
+            #    raise manager_ex.HostHavingServers(host=host_ref,
+            #                                       servers=servers)
             host_details = inventory.get_host_details(host_ref)
+            LOG.debug(f"host details: {host_details}")
             hostname = host_details['hypervisor_hostname']
             # NOTE(sbauza): Only last duplicate name for same extra capability
             # will be stored
