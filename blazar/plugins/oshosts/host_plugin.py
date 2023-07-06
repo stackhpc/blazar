@@ -424,7 +424,10 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
 
             traits = self.placement_client.get_traits(rp['uuid'])
             for trait in traits['traits']:
-                LOG.info(trait)
+                db_api.host_trait_create({
+                    'computehost_id': host['id'],
+                    'trait': trait,
+                })
 
             return self.get_computehost(host['id'])
 

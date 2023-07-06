@@ -759,7 +759,7 @@ def host_destroy(host_id):
         session.delete(host)
 
 
-# ComputeHostCustomResource
+# ComputeHostResourceInventory
 
 def host_custom_resource_create(values):
     values = values.copy()
@@ -782,7 +782,7 @@ def host_custom_resource_create(values):
 
 def _host_custom_resource_get_all_per_host(session, host_id):
     query = model_query(models.ComputeHostResourceInventory, session)
-    LOG.info(query)
+    LOG.debug(query)
     return query.filter_by(computehost_id=host_id)
 
 
@@ -790,6 +790,37 @@ def host_custom_resource_get_all_per_host(host_id):
     return _host_custom_resource_get_all_per_host(get_session(),
                                                   host_id).all()
 
+
+# ComputeHostTrait
+
+def host_trait_create(values):
+    values = values.copy()
+
+    custom_resource = models.ComputeHostTrait()
+    custom_resource.update(values)
+
+    session = get_session()
+    with session.begin():
+        try:
+            custom_resource.save(session=session)
+        except common_db_exc.DBDuplicateEntry as e:
+            # raise exception about duplicated columns (e.columns)
+            raise db_exc.BlazarDBDuplicateEntry(
+                model=custom_resource.__class__.__name__,
+                columns=e.columns)
+
+    return None
+
+
+def _host_trait_get_all_per_host(session, host_id):
+    query = model_query(models.ComputeHostTrait, session)
+    LOG.debug(query)
+    return query.filter_by(computehost_id=host_id)
+
+
+def host_trait_get_all_per_host(host_id):
+    return _host_trait_get_all_per_host(get_session(),
+                                                  host_id).all()
 
 # ComputeHostExtraCapability
 
