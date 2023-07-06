@@ -499,11 +499,12 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 )
 
             inventory = nova.NovaInventory()
-            servers = inventory.get_servers_per_host(
-                host['hypervisor_hostname'])
-            if servers:
-                raise manager_ex.HostHavingServers(
-                    host=host['hypervisor_hostname'], servers=servers)
+            # TODO(johng): hack to allow remove host!
+            #servers = inventory.get_servers_per_host(
+            #    host['hypervisor_hostname'])
+            #if servers:
+            #    raise manager_ex.HostHavingServers(
+            #        host=host['hypervisor_hostname'], servers=servers)
 
             try:
                 pool = nova.ReservationPool()
