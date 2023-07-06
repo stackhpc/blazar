@@ -402,12 +402,18 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise manager_ex.ResourceProviderNotFound(host=hostname)
             inventories = self.placement_client.get_inventory(rp['uuid'])
             for rc, inventory in inventories['inventories'].items():
+                reserved = int(inventory['reserved'])
+                # Hack for when ironic nodes are not currently available
+                if reserved == 1:
+                    reserved = 0
                 cr = {
                     'computehost_id': host['id'],
                     'resource_class': rc,
-                    # TODO what about reserved?
-                    'units': inventory['max_unit'],
-                    'pci_alias': None,
+                    'allocation_ratio': inventory['allocation_ratio'],
+                    'total': inventory['total'],
+                    'reserved':  reserved,
+                    'max_unit': inventory['max_unit'],
+                    'min_unit': inventory['min_unit'],
                 }
                 if rc.startswith('CUSTOM_PCI_'):
                     alias = rc.split('CUSTOM_PCI_')
