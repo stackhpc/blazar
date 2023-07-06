@@ -277,15 +277,15 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 int(flavor_details['OS-FLV-EXT-DATA:ephemeral']))
             # TODO(johngarbutt) make use of extra_specs
             # extra_specs = flavor.get_keys()
-            values['resource_properties'] = {}
 
         query_params = {
             'cpus': values['vcpus'],
             'memory': values['memory_mb'],
             'disk': values['disk_gb'],
             'resource_properties': values['resource_properties'],
-            'resource_inventory': values['resource_inventory'],
-            'resource_traits': values['resource_traits'],
+            # TODO...
+            #'resource_inventory': values['resource_inventory'],
+            #'resource_traits': values['resource_traits'],
             'start_date': values['start_date'],
             'end_date': values['end_date']
             }
