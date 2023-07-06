@@ -568,7 +568,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                           'reservation_id': reservation_id})
 
         try:
-            flavor, group, pool = self._create_resources(instance_reservation)
+            # TODO... get resource inventory!
+            flavor, group, pool = self._create_resources(instance_reservation, resource_inventory="")
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)
