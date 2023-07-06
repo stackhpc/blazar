@@ -764,7 +764,7 @@ def host_destroy(host_id):
 def host_custom_resource_create(values):
     values = values.copy()
 
-    custom_resource = models.ComputeHostCustomResource()
+    custom_resource = models.ComputeHostResourceInventory()
     custom_resource.update(values)
 
     session = get_session()
@@ -781,7 +781,7 @@ def host_custom_resource_create(values):
 
 
 def _host_custom_resource_get_all_per_host(session, host_id):
-    query = model_query(models.ComputeHostCustomResource, session)
+    query = model_query(models.ComputeHostResourceInventory, session)
     LOG.info(query)
     return query.filter_by(computehost_id=host_id)
 
