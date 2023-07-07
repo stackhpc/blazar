@@ -400,13 +400,15 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation_rc = "resources:CUSTOM_RESERVATION_" + rsv_id_rc_format
         extra_specs = {
             FLAVOR_EXTRA_SPEC: reservation_id,
-            "affinity_id": group_id,
             reservation_rc: "1"
             }
+        if group_id:
+            extra_specs["affinity_id"] = group_id
         # Set any required custom resource classes
         for cr in resources or []:
             extra_specs["resources:%s" % cr['name']] = cr['value']
         # TODO(johngarbutt) and required/forbidden traits?
+        LOG.debug(extra_specs)
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
