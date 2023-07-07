@@ -428,8 +428,12 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             for req in resource_inventory.split(','):
                 resource_class, amount = req.split(':')
                 resources.append({'name': resource_class, 'value': amount})
+
         # TODO(johngarbutt): traits and pci alias!?
 
+        # TODO get PCPUs and more!
+        if not inst_reservation['vcpus']:
+            inst_reservation['vcpus'] = 1
         reserved_flavor = self._create_flavor(reservation_id,
                                               inst_reservation['vcpus'],
                                               inst_reservation['memory_mb'],
