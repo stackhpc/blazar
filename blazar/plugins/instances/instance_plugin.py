@@ -415,14 +415,13 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation_id = inst_reservation['reservation_id']
 
         ctx = context.current()
-        user_client = nova.NovaClientWrapper()
-
+        #user_client = nova.NovaClientWrapper()
         #reserved_group = user_client.nova.server_groups.create(
         #    RESERVATION_PREFIX + ':' + reservation_id,
         #    'affinity' if inst_reservation['affinity'] else 'anti-affinity'
         #    )
         # TODO this should be optional!!
-        reserved_group = "asdf134"
+        reserved_group_id = None
 
         resources = []
         if resource_inventory:
@@ -435,20 +434,20 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                               inst_reservation['vcpus'],
                                               inst_reservation['memory_mb'],
                                               inst_reservation['disk_gb'],
-                                              reserved_group.id,
+                                              reserved_group_id,
                                               resources=resources)
 
         pool = nova.ReservationPool()
         pool_metadata = {
             RESERVATION_PREFIX: reservation_id,
             'filter_tenant_id': ctx.project_id,
-            'affinity_id': reserved_group.id
+            'affinity_id': reserved_group_id
             }
         agg = pool.create(name=reservation_id, metadata=pool_metadata)
 
         self.placement_client.create_reservation_class(reservation_id)
 
-        return reserved_flavor, reserved_group, agg
+        return reserved_flavor, reserved_group_id, agg
 
     def cleanup_resources(self, instance_reservation):
         def check_and_delete_resource(client, id):
@@ -572,7 +571,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         try:
             # TODO... get resource inventory!
-            flavor, group, pool = self._create_resources(instance_reservation, resource_inventory="")
+            flavor, group_id, pool = self._create_resources(instance_reservation, resource_inventory="")
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)
@@ -581,7 +580,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         db_api.instance_reservation_update(instance_reservation['id'],
                                            {'flavor_id': flavor.id,
-                                            'server_group_id': group.id,
+                                            'server_group_id': group_id,
                                             'aggregate_id': pool.id})
 
         return instance_reservation['id']
