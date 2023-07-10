@@ -360,7 +360,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         return {'added': added_host_ids, 'removed': removed_host_ids}
 
     def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id,
-                       resources=None):
+                       source_flavor=None):
         flavor_details = {
             'flavorid': reservation_id,
             'name': RESERVATION_PREFIX + ":" + reservation_id,
@@ -380,16 +380,25 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             }
         if group_id:
             extra_specs["affinity_id"] = group_id
-        # Set any required custom resource classes
-        for cr in resources or []:
-            extra_specs["resources:%s" % cr['name']] = cr['value']
-        # TODO(johngarbutt) and required/forbidden traits?
+
+        # Copy across any extra specs from the source flavor
+        # while being sure not to overide the ones used above
+        if source_flavor:
+            source_flavor = json.loads(source_flavor)
+        if source_flavor:
+            extra_specs["blazar_copy_from_id"] = source_flavor["id"]
+            extra_specs["blazar_copy_from_name"] = source_flavor["name"]
+            source_extra_specs = source_flavor["extra_specs"]
+            for key, value in source_extra_specs.items():
+                if key not in extra_specs.keys():
+                    extra_specs[key] = value
+
         LOG.debug(extra_specs)
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
 
-    def _create_resources(self, inst_reservation, resource_inventory):
+    def _create_resources(self, inst_reservation):
         reservation_id = inst_reservation['reservation_id']
 
         ctx = context.current()
@@ -401,13 +410,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         # TODO this should be optional!!
         reserved_group_id = None
 
-        resources = []
-        if resource_inventory:
-            for req in resource_inventory.split(','):
-                resource_class, amount = req.split(':')
-                resources.append({'name': resource_class, 'value': amount})
-
         # TODO(johngarbutt): traits and pci alias!?
+        resources = []
 
         # TODO get PCPUs and more!
         if not inst_reservation['vcpus']:
@@ -417,7 +421,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                               inst_reservation['memory_mb'],
                                               inst_reservation['disk_gb'],
                                               reserved_group_id,
-                                              resources=resources)
+                                              inst_reservation['source_flavor'])
 
         pool = nova.ReservationPool()
         pool_metadata = {
@@ -494,7 +498,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                     reservation['vcpus'],
                                     reservation['memory_mb'],
                                     reservation['disk_gb'],
-                                    reservation['server_group_id'])
+                                    reservation['server_group_id'],
+                                    reservation['source_flavor'])
             except nova_exceptions.ClientException:
                 LOG.exception("Failed to update Nova resources "
                               "for reservation %s", reservation['id'])
@@ -628,8 +633,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                           'reservation_id': reservation_id})
 
         try:
-            # TODO... get resource inventory!
-            flavor, group_id, pool = self._create_resources(instance_reservation, resource_inventory="")
+            flavor, group_id, pool = self._create_resources(instance_reservation)
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)
