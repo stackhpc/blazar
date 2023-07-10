@@ -553,7 +553,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise mgr_exceptions.MalformedParameter(
                     param='affinity (must be a bool value or None)')
 
-    def _populate_values_with_flavor_info(values):
+    def _populate_values_with_flavor_info(self, values):
         # do not mutate the user input in place
         values = values.copy()
 
