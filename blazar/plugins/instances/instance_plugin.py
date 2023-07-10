@@ -14,6 +14,7 @@
 
 import collections
 import datetime
+import json
 import retrying
 
 from novaclient import exceptions as nova_exceptions
@@ -552,9 +553,84 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise mgr_exceptions.MalformedParameter(
                     param='affinity (must be a bool value or None)')
 
+    def _populate_values_with_flavor_info(values):
+        # do not mutate the user input in place
+        values = values.copy()
+
+        # Look up flavor to get the reservation details
+        flavor_id = values.get('flavor_id')
+
+        # TODO(johngarbutt) hack to get flavor in via horizon!!
+        if not flavor_id and values['resource_properties'] and "flavor" in values['resource_properties']:
+            from oslo_serialization import jsonutils
+            requirements = jsonutils.loads(values['resource_properties'])
+            flavor_id = requirements[1]
+            values['resource_properties'] = ""
+
+        resource_inventory = {}
+        resource_traits = {}
+        source_flavor = {}
+
+        if not flavor_id:
+            # create resource requests from legacy values, if present
+            resource_inventory["VCPU"] = values.get('vcpus', 0)
+            resource_inventory["MEMORY_MB"] = values.get('memory_mb', 0)
+            resource_inventory["DISK_GB"] = values.get('disk_gb', 0)
+
+        else:
+            user_client = nova.NovaClientWrapper()
+            flavor = user_client.nova.nova.flavors.get(flavor_id)
+            source_flavor = flavor.to_dict()
+            # TODO(johngarbutt): use newer api to get this above
+            source_flavor["extra_specs"] = flavor.get_keys()
+
+            # Populate the legacy instance reservation fields
+            # And override what the user specified, if anything
+            values['vcpus'] = int(source_flavor['vcpus'])
+            values['memory_mb'] = int(source_flavor['ram'])
+            values['disk_gb'] = (
+                int(source_flavor['disk']) +
+                int(source_flavor['OS-FLV-EXT-DATA:ephemeral']))
+
+            # add default resource requests
+            resource_inventory["VCPU"] = values['vcpus']
+            resource_inventory["MEMORY_MB"] = values['memory_mb']
+            resource_inventory["DISK_GB"] = values['disk_gb']
+
+            # Check for PCPUs
+            hw_cpu_policy = source_flavor['extra_specs'].get("hw:cpu_policy")
+            if hw_cpu_policy == "dedicated":
+                resource_inventory["PCPU"] = source_flavor['vcpus']
+                resource_inventory["VCPU"] = 0
+            values["resource_inventory"] = json.dumps(resource_inventory)
+
+            # Check for traits and extra resources
+            for key, value in source_flavor['extra_specs'].items():
+                if key.startswith("trait:"):
+                    trait = key.split(":")[1]
+                    if value == "required":
+                        resource_traits[trait] = "required"
+                    elif value == "forbidden":
+                        resource_traits[trait] = "forbidden"
+
+                if key.startswith("resource:"):
+                    rc = key.split(":")[1]
+                    values[rc] = int(key)
+
+        values["resource_inventory"] = json.dumps(resource_inventory)
+        values["resource_traits"] = json.dumps(resource_traits)
+        values["source_flavor"] = json.dumps(source_flavor)
+
+        LOG.debug(values)
+        return values
+
     def reserve_resource(self, reservation_id, values):
         self._check_missing_reservation_params(values)
         self._validate_reservation_params(values)
+
+        # when user specifies a flavor,
+        # populate values from the flavor
+        values = self._populate_values_with_flavor_info(values)
 
         hosts = self.pickup_hosts(reservation_id, values)
 
