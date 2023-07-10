@@ -500,6 +500,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise mgr_exceptions.NovaClientError()
 
     def _check_missing_reservation_params(self, values):
+        raise Exception("test")
         marshall_attributes = set(['amount', 'affinity'])
         # TODO(johngarbutt): do we want a config to require
         # flavor_id and reject other requests, or an enforcer?
