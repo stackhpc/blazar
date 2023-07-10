@@ -143,6 +143,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         return hosts_list
 
     def allocation_candidates(self, reservation):
+        self._populate_values_with_flavor_info(reservation)
         return self.pickup_hosts(None, reservation)['added']
 
     def list_allocations(self, query):
@@ -529,6 +530,9 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                     param='affinity (must be a bool value or None)')
 
     def _populate_values_with_flavor_info(self, values):
+        if "resource_inventory" in value.keys():
+            return
+
         # Look up flavor to get the reservation details
         flavor_id = values.get('flavor_id')
 
