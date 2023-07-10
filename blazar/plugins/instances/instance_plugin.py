@@ -615,7 +615,10 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'disk_gb': values['disk_gb'],
             'amount': values['amount'],
             'affinity': bool_from_string(values['affinity'], default=None),
-            'resource_properties': values['resource_properties']
+            'resource_properties': values['resource_properties'],
+            'resource_inventory': values['resource_inventory'],
+            'resource_traits': values['resource_traits'],
+            'source_flavor': values['source_flavor'],
             }
         instance_reservation = db_api.instance_reservation_create(
             instance_reservation_val)
