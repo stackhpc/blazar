@@ -216,24 +216,37 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             filters += plugins_utils.convert_requirements(resource_properties)
 
         hosts = db_api.reservable_host_get_all_by_queries(filters)
-        # TODO(johngarbutt) can we change to do this via the DB?!
+
+        LOG.debug(f"Found some hosts: {hosts}")
+
         # Remove hosts without the required custom resources
+        resource_inventory = resource_inventory.copy()
+        # TODO(johngarbutt) can we remove vcpus,disk,etc as a special case?
+        del resource_inventory["VCPU"]
+        del resource_inventory["MEMORY_MB"]
+        del resource_inventory["DISK_GB"]
         if resource_inventory:
             cr_hosts = []
-            for req in resource_inventory.split(','):
-                rc, amount = req.split(':')
-                for host in hosts:
-                    # TODO(johngarbutt): the join means we should have
-                    # already got this from the previous query?
-                    host_crs = db_api.host_custom_resource_get_all_per_host(
+            for host in hosts:
+                host_crs = db_api.host_custom_resource_get_all_per_host(
                         host['id'])
-                    for cr in host_crs:
-                        if cr['resource_class'] == rc:
-                            if cr['units'] >= int(amount):
-                                cr_hosts.append(host)
+                host_inventory = {cr['resource_class']: cr for cr in host_crs}
+                host_is_ok = False
+                for rc, request in resource_inventory.items():
+                    host_inventory = host_inventory[rc]
+                    host_max = host_inventory['max_unit']
+                    if request <= host_max:
+                        host_is_ok = True
+                    else:
+                        host_is_ok = False
+                        LOG.debug(f"Filter out becase of {rc} for {host}")
+                        break
+                if host_is_ok:
+                    cr_hosts.append(host)
             hosts = cr_hosts
+
         if resource_traits:
-            # TODO(johngarbutt) filter out traits
+            # TODO(johngarbutt): filter resource traits!
             pass
 
         free_hosts, reserved_hosts = self.filter_hosts_by_reservation(
@@ -265,55 +278,16 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         req_amount = values['amount']
         affinity = bool_from_string(values['affinity'], default=None)
 
-        # Look up flavor to get the reservation details
-        flavor_id = values.get('flavor_id')
-
-        # hack to get flavor from resource_properties!!
-        if not flavor_id and values['resource_properties'] and "flavor" in values['resource_properties']:
-            from oslo_serialization import jsonutils
-            requirements = jsonutils.loads(values['resource_properties'])
-            flavor_id = requirements[1]
-            values['resource_properties'] = ""
-
-        if flavor_id:
-            user_client = nova.NovaClientWrapper()
-            flavor = user_client.nova.nova.flavors.get(flavor_id)
-            flavor_details = flavor.to_dict()
-            values['vcpus'] = int(flavor_details['vcpus'])
-            values['memory_mb'] = int(flavor_details['ram'])
-            values['disk_gb'] = (
-                int(flavor_details['disk']) +
-                int(flavor_details['OS-FLV-EXT-DATA:ephemeral']))
-
-            # TODO(johngarbutt): use newer api to get this above
-            extra_specs = flavor.get_keys()
-            LOG.debug(extra_specs)
-
-            # check for pcpus
-            resource_inventory = {}
-            hw_cpu_policy = extra_specs.get("hw:cpu_policy")
-            if hw_cpu_policy == "dedicated":
-                values['vcpus'] = 0
-                # TODO request PCPUs!
-                resource_inventory["PCPU"] = flavor_details['vcpus']
-            LOG.debug(resource_inventory)
-
-            required_traits = []
-            for key, value in extra_specs.items():
-                if key.startswith("trait:"):
-                    trait = key.split(":")[1]
-                    if value == "required":
-                        required_traits += trait
-            LOG.debug(required_traits)
+        # TODO need to check for custom resource requests!
+        resource_inventory = json.loads(values['resource_inventory'])
+        # TODO need to check traits as well!
 
         query_params = {
-            'cpus': values['vcpus'],
-            'memory': values['memory_mb'],
-            'disk': values['disk_gb'],
+            'cpus': resource_inventory['VCPU'],
+            'memory': resource_inventory['MEMORY_MB'],
+            'disk': resource_inventory['DISK_GB'],
             'resource_properties': values['resource_properties'],
-            # TODO...
-            #'resource_inventory': values['resource_inventory'],
-            #'resource_traits': values['resource_traits'],
+            'resource_inventory': resource_inventory,
             'start_date': values['start_date'],
             'end_date': values['end_date']
             }
