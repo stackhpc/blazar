@@ -528,9 +528,6 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                     param='affinity (must be a bool value or None)')
 
     def _populate_values_with_flavor_info(self, values):
-        # do not mutate the user input in place
-        values = values.copy()
-
         # Look up flavor to get the reservation details
         flavor_id = values.get('flavor_id')
 
@@ -576,7 +573,6 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             if hw_cpu_policy == "dedicated":
                 resource_inventory["PCPU"] = source_flavor['vcpus']
                 resource_inventory["VCPU"] = 0
-            values["resource_inventory"] = json.dumps(resource_inventory)
 
             # Check for traits and extra resources
             for key, value in source_flavor['extra_specs'].items():
@@ -596,7 +592,6 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         values["source_flavor"] = json.dumps(source_flavor)
 
         LOG.debug(values)
-        return values
 
     def reserve_resource(self, reservation_id, values):
         self._check_missing_reservation_params(values)
@@ -604,7 +599,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         # when user specifies a flavor,
         # populate values from the flavor
-        values = self._populate_values_with_flavor_info(values)
+        self._populate_values_with_flavor_info(values)
 
         hosts = self.pickup_hosts(reservation_id, values)
 
