@@ -153,9 +153,6 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         host = host_info['host']
         host_crs = db_api.host_custom_resource_get_all_per_host(host['id'])
-        LOG.debug(f"Inventory for{host_info['host']['hypervisor_hostname']} "
-                  f"is {host_crs}")
-
         host_inventory = {cr['resource_class']: cr for cr in host_crs}
         if not host_inventory:
             # backwards compat for hosts added before we
@@ -168,6 +165,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 "DISK_GB": dict(total=host['local_gb'],
                                 allocation_ration=1.0),
             }
+        LOG.debug(f"Inventory for {host_info['host']['hypervisor_hostname']} "
+                  f"is {host_inventory}")
 
         # see how much room for slots we have
         hosts_list = []
@@ -175,8 +174,12 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         def has_free_slot():
             for rc, requested in resource_request.items():
+                if not requested:
+                    # skip things like requests for 0 vcpus
+                    continue
+
                 host_details = host_inventory.get(rc)
-                if requested and not host_details:
+                if not host_details:
                     # host doesn't have this sort of resource
                     LOG.debug(f"resource not found for {rc} for "
                               f"{host_info['host']['hypervisor_hostname']}")
