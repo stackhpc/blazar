@@ -124,6 +124,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             usage = resource_usage_by_event(event)
 
             if event['event']['event_type'] == 'start_lease':
+                LOG.debug(f"found start {event} with {usage}")
                 for rc, usage_amount in usage.items():
                     current_usage[rc] += usage_amount
                     # TODO(johngarbutt) what if the max usage is
@@ -144,9 +145,14 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         # get high water mark of usage during all reservations
         max_usage = self._max_usages(host_info['reservations'])
+        LOG.debug(f"Max usage {host_info['host']['hypervisor_hostname']} "
+                  f"is {max_usage}")
 
         host = host_info['host']
         host_crs = db_api.host_custom_resource_get_all_per_host(host['id'])
+        LOG.debug(f"Inventory for{host_info['host']['hypervisor_hostname']} "
+                  f"is {host_crs}")
+
         host_inventory = {cr['resource_class']: cr for cr in host_crs}
         if not host_inventory:
             # backwards compat for hosts added before we
@@ -163,8 +169,6 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         # see how much room for slots we have
         hosts_list = []
         current_usage = max_usage.copy()
-        LOG.debug(f"Max usage {host_info['host']['hypervisor_hostname']} "
-                  f"is {max_usage}")
 
         def has_free_slot():
             for rc, requested in resource_request.items():
