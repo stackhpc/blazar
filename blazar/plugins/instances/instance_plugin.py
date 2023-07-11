@@ -176,7 +176,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         def has_free_slot():
             for rc, requested in resource_request.items():
                 host_details = host_inventory.get(rc)
-                if not host_details:
+                if requested and not host_details:
                     # host doesn't have this sort of resource
                     LOG.debug(f"resource not found for {rc} for "
                               f"{host_info['host']['hypervisor_hostname']}")
