@@ -37,7 +37,7 @@ def upgrade():
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('computehost_id', sa.String(length=36), nullable=True),
     sa.Column('resource_class', sa.String(length=255), nullable=False),
-    sa.Column('allocation_ratio', sa.Integer(), nullable=False),
+    sa.Column('allocation_ratio', sa.Float(), nullable=False),
     sa.Column('total', sa.Integer(), nullable=False),
     sa.Column('reserved', sa.Integer(), nullable=False),
     sa.Column('max_unit', sa.Integer(), nullable=False),

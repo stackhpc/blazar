@@ -91,13 +91,24 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         return free, non_free
 
-    def max_usages(self, host, reservations):
-        def resource_usage_by_event(event, resource_type):
+    def _max_usages(self, reservations):
+        def resource_usage_by_event(event):
             instance_reservation = event['reservation']['instance_reservation']
-            LOG.debug("Found resource usage: "
-                      f"{instance_reservation['resource_inventory']}")
-            return instance_reservation[resource_type]
+            resource_inventory = instance_reservation['resource_inventory']
+            if not resource_inventory:
+                resource_inventory = json.loads(resource_inventory)
+            if not resource_inventory:
+                # backwards compatible with older reservations
+                # that do not have a resource_inventory populated
+                resource_inventory = {
+                    "VCPU": instance_reservation['vcpus'],
+                    "MEMORY_MB": instance_reservation['memory_mb'],
+                    "DISK_GB": instance_reservation['disk_gb'],
+                }
+            return resource_inventory
 
+        # Get sorted list of events for all reservations
+        # that exist in the target time window
         events_list = []
         for r in reservations:
             fetched_events = db_api.event_get_all_sorted_by_filters(
@@ -105,52 +116,77 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 filters={'lease_id': r['lease_id']})
             events_list.extend([{'event': e, 'reservation': r}
                                 for e in fetched_events])
-
         events_list.sort(key=lambda x: x['event']['time'])
 
-        max_vcpus = max_memory = max_disk = 0
-        current_vcpus = current_memory = current_disk = 0
-
+        current_usage = collections.defaultdict(int)
+        max_usage = collections.defaultdict(int)
         for event in events_list:
-            LOG.debug(f"For {host} we are checking event {event}")
+            usage = resource_usage_by_event(event)
+
             if event['event']['event_type'] == 'start_lease':
-                current_vcpus += resource_usage_by_event(event, 'vcpus')
-                current_memory += resource_usage_by_event(event, 'memory_mb')
-                current_disk += resource_usage_by_event(event, 'disk_gb')
-                if max_vcpus < current_vcpus:
-                    max_vcpus = current_vcpus
-                if max_memory < current_memory:
-                    max_memory = current_memory
-                if max_disk < current_disk:
-                    max_disk = current_disk
+                for rc, usage_amount in usage.items():
+                    current_usage[rc] += usage_amount
+                    # TODO(johngarbutt) what if the max usage is
+                    # actually outside the target time window?
+                    if max_usage[rc] < current_usage[rc]:
+                        max_usage[rc] = current_usage
+
             elif event['event']['event_type'] == 'end_lease':
-                current_vcpus -= resource_usage_by_event(event, 'vcpus')
-                current_memory -= resource_usage_by_event(event, 'memory_mb')
-                current_disk -= resource_usage_by_event(event, 'disk_gb')
+                for rc, usage_amount in usage.items():
+                    current_usage[rc] -= usage_amount
 
-        return max_vcpus, max_memory, max_disk
+        return max_usage
 
-    def get_hosts_list(self, host_info, cpus, memory, disk):
-        hosts_list = []
+    def _get_hosts_list(self, host_info, resource_request):
+        # For each host, look how many slots are available,
+        # given the current list of reservations within the
+        # target time window for this host
+
+        # get high water mark of usage during all reservations
+        max_usage = self._max_usages(host_info['reservations'])
+
         host = host_info['host']
-        reservations = host_info['reservations']
-        max_cpus, max_memory, max_disk = self.max_usages(host,
-                                                         reservations)
-        # TODO: big hack here for pCPUs!!!!
-        max_cpus = 0
-        LOG.debug(f"checking {host['hypervisor_hostname']} with "
-                  f"cpu:{max_cpus} mem:{max_memory} disk:{max_disk}"
-                  f"\nfor slots for: {cpus} {memory} {disk}")
-        used_cpus, used_memory, used_disk = (cpus, memory, disk)
-        while (max_cpus + used_cpus <= host['vcpus'] and
-               max_memory + used_memory <= host['memory_mb'] and
-               max_disk + used_disk <= host['local_gb']):
-            hosts_list.append(host)
-            used_cpus += cpus
-            used_memory += memory
-            used_disk += disk
+        host_crs = db_api.host_custom_resource_get_all_per_host(host['id'])
+        host_inventory = {cr['resource_class']: cr for cr in host_crs}
+        if not host_inventory:
+            # backwards compat for hosts added before we
+            # get info from placement
+            host_inventory = {
+                "VCPU": dict(total=host['vcpus'],
+                             allocation_ration=1.0),
+                "MEMORY_MB": dict(total=host['memory_mb'],
+                                  allocation_ration=1.0),
+                "DISK_GB": dict(total=host['local_gb'],
+                                allocation_ration=1.0),
+            }
 
-        LOG.debug(f"For host {host['hypervisor_hostname']} we have {len(hosts_list)} slots.")
+        # see how much room for slots we have
+        hosts_list = []
+        current_usage = max_usage.copy()
+
+        def has_free_slot():
+            for rc, requested in resource_request.items():
+                host_details = host_inventory.get(rc)
+                if not host_details:
+                    # host doesn't have this sort of resource
+                    return False
+                usage = current_usage[rc]
+
+                if requested > host_details["max_unit"]:
+                    # requested more than the max allowed by this host
+                    return False
+
+                capacity = ((host_details["total"] - host_details["reserved"])
+                            * host_details["allocation_ratio"])
+                return (usage + requested) <= capacity
+
+        while (has_free_slot()):
+            hosts_list.append(host)
+            for rc, requested in resource_request.items():
+                current_usage[rc] += requested
+
+        LOG.debug(f"For host {host_info['host']['hypervisor_hostname']} "
+                  "we have {len(hosts_list)} slots.")
         return hosts_list
 
     def allocation_candidates(self, reservation):
@@ -232,19 +268,19 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         LOG.debug(f"Found some hosts from db: {hosts}")
 
         # Remove hosts without the required custom resources
-        resource_inventory = resource_inventory.copy()
+        resource_extras = resource_inventory.copy()
         # TODO(johngarbutt) can we remove vcpus,disk,etc as a special case?
-        del resource_inventory["VCPU"]
-        del resource_inventory["MEMORY_MB"]
-        del resource_inventory["DISK_GB"]
-        if resource_inventory:
+        del resource_extras["VCPU"]
+        del resource_extras["MEMORY_MB"]
+        del resource_extras["DISK_GB"]
+        if resource_extras:
             cr_hosts = []
             for host in hosts:
                 host_crs = db_api.host_custom_resource_get_all_per_host(
                         host['id'])
                 host_inventory = {cr['resource_class']: cr for cr in host_crs}
                 host_is_ok = False
-                for rc, request in resource_inventory.items():
+                for rc, request in resource_extras.items():
                     host_inventory = host_inventory[rc]
                     host_max = host_inventory['max_unit']
                     if request <= host_max:
@@ -274,7 +310,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         # See how many free slots available per host
         available_hosts = []
         for host_info in (reserved_hosts + free_hosts):
-            hosts_list = self.get_hosts_list(host_info, cpus, memory, disk)
+            hosts_list = self._get_hosts_list(host_info, resource_inventory)
             available_hosts.extend(hosts_list)
 
         return available_hosts

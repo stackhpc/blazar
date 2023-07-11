@@ -273,7 +273,7 @@ class ComputeHostResourceInventory(mb.BlazarBase):
     id = _id_column()
     computehost_id = sa.Column(sa.String(36), sa.ForeignKey('computehosts.id'))
     resource_class = sa.Column(sa.String(255), nullable=False)
-    allocation_ratio = sa.Column(sa.Integer, nullable=False)
+    allocation_ratio = sa.Column(sa.Float, nullable=False)
     total = sa.Column(sa.Integer, nullable=False)
     reserved = sa.Column(sa.Integer, nullable=False)
     max_unit = sa.Column(sa.Integer, nullable=False)
