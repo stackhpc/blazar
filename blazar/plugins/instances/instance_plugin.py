@@ -124,17 +124,20 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             usage = resource_usage_by_event(event)
 
             if event['event']['event_type'] == 'start_lease':
-                LOG.debug(f"found start {event} with {usage}")
+                LOG.debug(f"found start{event} with {usage}")
                 for rc, usage_amount in usage.items():
                     current_usage[rc] += usage_amount
                     # TODO(johngarbutt) what if the max usage is
                     # actually outside the target time window?
                     if max_usage[rc] < current_usage[rc]:
-                        max_usage[rc] = current_usage
+                        max_usage[rc] = current_usage[rc]
 
             elif event['event']['event_type'] == 'end_lease':
                 for rc, usage_amount in usage.items():
                     current_usage[rc] -= usage_amount
+
+            LOG.debug(f"after {event}\nusage is: {current_usage}\n"
+                      f"max is: {max_usage}")
 
         return max_usage
 
