@@ -163,21 +163,29 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         # see how much room for slots we have
         hosts_list = []
         current_usage = max_usage.copy()
+        LOG.debug(f"Max usage {host_info['host']['hypervisor_hostname']} "
+                  f"is {max_usage}")
 
         def has_free_slot():
             for rc, requested in resource_request.items():
                 host_details = host_inventory.get(rc)
                 if not host_details:
                     # host doesn't have this sort of resource
+                    LOG.debug(f"resource not found for {rc} for "
+                              f"{host_info['host']['hypervisor_hostname']}")
                     return False
                 usage = current_usage[rc]
 
                 if requested > host_details["max_unit"]:
                     # requested more than the max allowed by this host
+                    LOG.debug(f"resource not found for {rc} for "
+                              f"{host_info['host']['hypervisor_hostname']}")
                     return False
 
                 capacity = ((host_details["total"] - host_details["reserved"])
                             * host_details["allocation_ratio"])
+                LOG.debug(f"Capacity is {capacity} for {rc} for "
+                          f"{host_info['host']['hypervisor_hostname']}")
                 return (usage + requested) <= capacity
 
         while (has_free_slot()):
@@ -186,7 +194,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 current_usage[rc] += requested
 
         LOG.debug(f"For host {host_info['host']['hypervisor_hostname']} "
-                  "we have {len(hosts_list)} slots.")
+                  f"we have {len(hosts_list)} slots.")
         return hosts_list
 
     def allocation_candidates(self, reservation):
