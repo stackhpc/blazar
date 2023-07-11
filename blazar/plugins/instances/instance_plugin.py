@@ -95,7 +95,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         def resource_usage_by_event(event):
             instance_reservation = event['reservation']['instance_reservation']
             resource_inventory = instance_reservation['resource_inventory']
-            if not resource_inventory:
+            if resource_inventory:
                 resource_inventory = json.loads(resource_inventory)
             if not resource_inventory:
                 # backwards compatible with older reservations
