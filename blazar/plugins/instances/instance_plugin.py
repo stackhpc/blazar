@@ -109,6 +109,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         current_vcpus = current_memory = current_disk = 0
 
         for event in events_list:
+            LOG.debug(f"For {host} we are checking event {event}")
             if event['event']['event_type'] == 'start_lease':
                 current_vcpus += resource_usage_by_event(event, 'vcpus')
                 current_memory += resource_usage_by_event(event, 'memory_mb')
@@ -132,6 +133,9 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservations = host_info['reservations']
         max_cpus, max_memory, max_disk = self.max_usages(host,
                                                          reservations)
+        LOG.debug(f"checking {host} with "
+                  f"cpu:{max_cpus} mem:{max_memory} disk:{max_disk}"
+                  f"\nfor slots for: {cpus} {memory} {disk}")
         used_cpus, used_memory, used_disk = (cpus, memory, disk)
         while (max_cpus + used_cpus <= host['vcpus'] and
                max_memory + used_memory <= host['memory_mb'] and
@@ -140,6 +144,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             used_cpus += cpus
             used_memory += memory
             used_disk += disk
+
+        LOG.debug(f"For host {host} we have {len(hosts_list)} slots.")
         return hosts_list
 
     def allocation_candidates(self, reservation):
@@ -218,7 +224,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         hosts = db_api.reservable_host_get_all_by_queries(filters)
 
-        LOG.debug(f"Found some hosts: {hosts}")
+        LOG.debug(f"Found some hosts from db: {hosts}")
 
         # Remove hosts without the required custom resources
         resource_inventory = resource_inventory.copy()
@@ -246,16 +252,21 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                     cr_hosts.append(host)
             hosts = cr_hosts
 
+        LOG.debug(f"Filtered hosts by resource classes: {hosts}")
+
         if resource_traits:
             # TODO(johngarbutt): filter resource traits!
             pass
 
+        # Look for all reservations that match our time window
+        # and group that by host
         free_hosts, reserved_hosts = self.filter_hosts_by_reservation(
             hosts,
             start_date - datetime.timedelta(minutes=CONF.cleaning_time),
             end_date + datetime.timedelta(minutes=CONF.cleaning_time),
             excludes_res)
 
+        # See how many free slots available per host
         available_hosts = []
         for host_info in (reserved_hosts + free_hosts):
             hosts_list = self.get_hosts_list(host_info, cpus, memory, disk)
@@ -312,6 +323,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         #  2. hosts with reservations followed by hosts without reservations
         # Note that the `candidate_id_list` has already been ordered
         # satisfying the second requirement.
+        LOG.debug(f"Old hosts: {candidate_id_list}")
+        LOG.debug(f"Found candidates: {candidate_id_list}")
         if affinity:
             host_id_map = collections.Counter(candidate_id_list)
             available = {k for k, v in host_id_map.items() if v >= req_amount}
