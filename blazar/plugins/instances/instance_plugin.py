@@ -133,7 +133,9 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservations = host_info['reservations']
         max_cpus, max_memory, max_disk = self.max_usages(host,
                                                          reservations)
-        LOG.debug(f"checking {host} with "
+        # TODO: big hack here for pCPUs!!!!
+        max_cpus = 0
+        LOG.debug(f"checking {host['hypervisor_hostname']} with "
                   f"cpu:{max_cpus} mem:{max_memory} disk:{max_disk}"
                   f"\nfor slots for: {cpus} {memory} {disk}")
         used_cpus, used_memory, used_disk = (cpus, memory, disk)
@@ -145,7 +147,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             used_memory += memory
             used_disk += disk
 
-        LOG.debug(f"For host {host} we have {len(hosts_list)} slots.")
+        LOG.debug(f"For host {host['hypervisor_hostname']} we have {len(hosts_list)} slots.")
         return hosts_list
 
     def allocation_candidates(self, reservation):
