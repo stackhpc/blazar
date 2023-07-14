@@ -495,7 +495,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                               reserved_group_id,
                                               inst_reservation['source_flavor'])
 
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         pool_metadata = {
             RESERVATION_PREFIX: reservation_id,
             'filter_tenant_id': ctx.project_id,
@@ -519,7 +519,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         check_and_delete_resource(self.nova.nova.server_groups,
                                   instance_reservation['server_group_id'])
         check_and_delete_resource(self.nova.nova.flavors, reservation_id)
-        check_and_delete_resource(nova.ReservationPool(), reservation_id)
+        # TODO(johngarbutt): should we remove all aggregates in placement here?
+        check_and_delete_resource(nova.PlacementReservationPool(), reservation_id)
 
     def update_resources(self, reservation_id):
         """Updates reserved resources in Nova.
@@ -532,7 +533,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation = db_api.reservation_get(reservation_id)
 
         if reservation['status'] == 'active':
-            pool = nova.ReservationPool()
+            pool = nova.PlacementReservationPool()
 
             # Dict of number of instances to reserve on a host keyed by the
             # host id
@@ -545,9 +546,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             for host_id, num in allocation_map.items():
                 host = db_api.host_get(host_id)
                 try:
-                    pool.add_computehost(
-                        reservation['aggregate_id'],
-                        host['service_name'], stay_in=True)
+                    pool.add_computehost(reservation, host)
                 except mgr_exceptions.AggregateAlreadyHasHost:
                     pass
                 except nova_exceptions.ClientException:
@@ -814,7 +813,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                       'project_id': ctx.project_id})
             raise mgr_exceptions.EventError()
 
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
 
         # Dict of number of instances to reserve on a host keyed by the
         # host id
@@ -826,8 +825,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         for host_id, num in allocation_map.items():
             host = db_api.host_get(host_id)
-            pool.add_computehost(instance_reservation['aggregate_id'],
-                                 host['service_name'], stay_in=True)
+            pool.add_computehost(instance_reservation, host)
             self.placement_client.update_reservation_inventory(
                 host['hypervisor_hostname'], reservation_id, num)
 
@@ -847,6 +845,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             reservation_id=reservation_id)
         for allocation in allocations:
             host = db_api.host_get(allocation['compute_host_id'])
+            pool = nova.PlacementReservationPool()
+            pool.remove_computehost(instance_reservation, host)
             db_api.host_allocation_destroy(allocation['id'])
             hostnames.append(host['hypervisor_hostname'])
 
@@ -1001,12 +1001,11 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def _pre_reallocate(self, reservation, host_id):
         """Delete the reservation inventory/aggregates for the host."""
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         # Remove the failed host from the aggregate.
         if reservation['status'] == status.reservation.ACTIVE:
             host = db_api.host_get(host_id)
-            pool.remove_computehost(reservation['aggregate_id'],
-                                    host['service_name'])
+            pool.remove_computehost(reservation, host)
             try:
                 self.placement_client.delete_reservation_inventory(
                     host['hypervisor_hostname'], reservation['id'])
@@ -1015,13 +1014,11 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def _post_reallocate(self, reservation, lease, host_id, num):
         """Add the reservation inventory/aggregates for the host."""
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         if reservation['status'] == status.reservation.ACTIVE:
             # Add the alternative host into the aggregate.
             new_host = db_api.host_get(host_id)
-            pool.add_computehost(reservation['aggregate_id'],
-                                 new_host['service_name'],
-                                 stay_in=True)
+            pool.add_computehost(reservation, new_host)
             # Here we use "additional=True" not to break the existing
             # inventory(allocations) on the new host
             self.placement_client.update_reservation_inventory(

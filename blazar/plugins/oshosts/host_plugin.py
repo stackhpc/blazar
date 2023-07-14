@@ -366,7 +366,8 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
 
             pool = nova.ReservationPool()
             pool.add_computehost(self.freepool_name,
-                                 host_details['service_name'])
+                                 host_details['service_name'],
+                                 host_details['hypervisor_hostname'])
 
             host = None
             cantaddextracapability = []

@@ -450,3 +450,44 @@ class BlazarPlacementClient(object):
             LOG.info("Resource class %s doesn't exist or there is no "
                      "inventory for that resource class on resource provider "
                      "%s. Skipped the deletion", rc_name, rp_name)
+
+    def get_rp_aggregates(self, rp_uuid):
+        """Call placement to get resource provider aggregates information.
+
+        :param rp_uuid: UUID of the resource provider to get
+        """
+        url = '/resource_providers/%s/aggregates' % rp_uuid
+        resp = self.get(url)
+        if resp:
+            return resp.json()
+        raise exceptions.ResourceProviderNotFound(resource_provider=rp_uuid)
+
+    def _put_rp_aggregates(self, rp_uuid, aggregate_info):
+        """Call placement to get resource provider aggregates information.
+
+        :param rp_uuid: UUID of the resource provider to get
+        """
+        url = '/resource_providers/%s/aggregates' % rp_uuid
+        resp = self.put(url, aggregate_info)
+        # TODO(johngarbutt): should we retry on confict?
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_rp_to_aggregate(self, aggregate_uuid, rp_uuid):
+        aggregate_info = self.get_rp_aggregates(rp_uuid)
+        if aggregate_uuid not in aggregate_info["aggregates"]:
+            aggregate_info["aggregates"].append(aggregate_uuid)
+            # NOTE: this includes resource_provider_generation
+            # to ensure an atomic update
+            return self._put_rp_aggregates(aggregate_info)
+
+    def remove_rp_from_aggregate(self, aggregate_uuid, rp_uuid):
+        aggregate_info = self.get_rp_aggregates(rp_uuid)
+        current_aggregates = list(aggregate_info["aggregates"])
+        if aggregate_uuid in current_aggregates:
+            new_aggregates = [agg for agg in current_aggregates
+                              if agg != aggregate_uuid]
+            aggregate_info["aggregates"] = new_aggregates
+            # NOTE: this includes resource_provider_generation
+            # to ensure an atomic update
+            return self._put_rp_aggregates(aggregate_info)

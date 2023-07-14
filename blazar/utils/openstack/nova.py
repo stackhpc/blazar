@@ -26,6 +26,7 @@ from blazar import context
 from blazar.manager import exceptions as manager_exceptions
 from blazar.plugins import oshosts
 from blazar.utils.openstack import base
+from blazar.utils.openstack import placement
 
 
 nova_opts = [
@@ -214,6 +215,9 @@ class ReservationPool(NovaClientWrapper):
         self.config = CONF.nova
         self.freepool_name = self.config.aggregate_freepool_name
 
+        # used to manage placement aggregates
+        self.placement_client = placement.BlazarPlacementClient()
+
     def get_aggregate_from_name_or_id(self, aggregate_obj):
         """Return an aggregate by name or an id."""
 
@@ -326,11 +330,12 @@ class ReservationPool(NovaClientWrapper):
 
         try:
             agg = self.get_aggregate_from_name_or_id(pool)
+            # TODO get node list from placement?
             return agg.hosts
         except manager_exceptions.AggregateNotFound:
             return []
 
-    def add_computehost(self, pool, hosts, stay_in=False):
+    def add_computehost(self, pool, hypervisor_hostnames, stay_in=False):
         """Add compute host(s) to an aggregate.
 
         Each host must exist and be in the freepool, otherwise raise an error.
@@ -343,20 +348,23 @@ class ReservationPool(NovaClientWrapper):
         Raise an aggregate exception if something wrong.
         """
 
-        if not isinstance(hosts, list):
-            hosts = [hosts]
+        if not isinstance(hypervisor_hostnames, list):
+            hypervisor_hostnames = [hypervisor_hostnames]
 
         added_hosts = []
         removed_hosts = []
         agg = self.get_aggregate_from_name_or_id(pool)
+        # TODO get node list from placement?
 
         try:
             freepool_agg = self.get(self.freepool_name)
+            # TODO get node list from placement?
         except manager_exceptions.AggregateNotFound:
             raise manager_exceptions.NoFreePool()
 
         try:
-            for host in hosts:
+            # TODO!!
+            for host in hypervisor_hostnames:
                 if freepool_agg.id != agg.id and not stay_in:
                     if host not in freepool_agg.hosts:
                         raise manager_exceptions.HostNotInFreePool(
@@ -377,12 +385,13 @@ class ReservationPool(NovaClientWrapper):
                     #
                     # NOTE(priteau): Preemptibles should not be used with
                     # instance reservation yet.
-                    self.terminate_preemptibles(host)
+                    # TODO self.terminate_preemptibles(host)
 
                 LOG.info("adding host '%(host)s' to aggregate %(id)s",
                          {'host': host, 'id': agg.id})
                 try:
                     self.nova.aggregates.add_host(agg.id, host)
+                    # TODO: do placement instead
                     added_hosts.append(host)
                 except nova_exception.NotFound:
                     raise manager_exceptions.HostNotFound(host=host)
@@ -409,11 +418,11 @@ class ReservationPool(NovaClientWrapper):
         hosts = self.get_computehosts(pool)
         self.remove_computehost(pool, hosts)
 
-    def remove_computehost(self, pool, hosts):
+    def remove_computehost(self, pool, hypervisor_hostnames):
         """Remove compute host(s) from an aggregate."""
 
-        if not isinstance(hosts, list):
-            hosts = [hosts]
+        if not isinstance(hypervisor_hostnames, list):
+            hypervisor_hostnames = [hypervisor_hostnames]
 
         agg = self.get_aggregate_from_name_or_id(pool)
 
@@ -455,6 +464,7 @@ class ReservationPool(NovaClientWrapper):
     def add_project(self, pool, project_id):
         """Add a project to an aggregate."""
 
+        # TODO: we should make this work with the request filter?
         metadata = {project_id: self.config.project_id_key}
 
         agg = self.get_aggregate_from_name_or_id(pool)
@@ -471,6 +481,7 @@ class ReservationPool(NovaClientWrapper):
 
     def terminate_preemptibles(self, host):
         """Terminate preemptible instances running on host"""
+        raise Exception("TODO!")
         for server in self.nova.servers.list(
                 search_opts={"host": host, "all_tenants": 1}):
             try:
@@ -558,3 +569,34 @@ class NovaInventory(NovaClientWrapper):
                 #  a list of hosts without 'servers' attribute if no servers
                 #  are running on that host
                 return None
+
+
+class PlacementReservationPool(object):
+    def __init__(self):
+        self.config = CONF.nova
+        self.freepool_name = self.config.aggregate_freepool_name
+
+        self.nova_client = ReservationPool()
+        # used to manage placement aggregates
+        self.placement_client = placement.BlazarPlacementClient()
+
+    def create(self, name=None, az=None, metadata=None):
+        return self.nova_client.create(name, az, metadata)
+
+    def delete(self, agregate_id):
+        # TODO: remove all hosts in placement? its expensive!
+        return self.nova_client.delete(agregate_id, force=True)
+
+    def add_computehost(self, reservation, computehost):
+        aggregate_id = reservation["aggregate_id"]
+        rp = self.placement_client.get_resource_provider(
+            computehost["hypervisor_hostname"])
+        self.placement_client.add_rp_to_aggregate(
+            aggregate_id, rp["uuid"])
+
+    def remove_computehost(self, reservation, computehost):
+        aggregate_id = reservation["aggregate_id"]
+        rp = self.placement_client.get_resource_provider(
+            computehost["hypervisor_hostname"])
+        self.placement_client.remove_rp_from_aggregate(
+            aggregate_id, rp["uuid"])
