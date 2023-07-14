@@ -516,9 +516,9 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
             #        host=host['hypervisor_hostname'], servers=servers)
 
             try:
-                pool = nova.ReservationPool()
-                pool.remove_computehost(self.freepool_name,
-                                        host['service_name'])
+                pool = nova.PlacementReservationPool()
+                freepool_id = pool.get_aggregate_id_from_name(self.freepool_name)
+                pool.remove_computehost(freepool_id, host)
                 self.placement_client.delete_reservation_provider(
                     host['hypervisor_hostname'])
                 # NOTE(sbauza): Extracapabilities will be destroyed thanks to

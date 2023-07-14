@@ -215,9 +215,6 @@ class ReservationPool(NovaClientWrapper):
         self.config = CONF.nova
         self.freepool_name = self.config.aggregate_freepool_name
 
-        # used to manage placement aggregates
-        self.placement_client = placement.BlazarPlacementClient()
-
     def get_aggregate_from_name_or_id(self, aggregate_obj):
         """Return an aggregate by name or an id."""
 
@@ -330,12 +327,11 @@ class ReservationPool(NovaClientWrapper):
 
         try:
             agg = self.get_aggregate_from_name_or_id(pool)
-            # TODO get node list from placement?
             return agg.hosts
         except manager_exceptions.AggregateNotFound:
             return []
 
-    def add_computehost(self, pool, hypervisor_hostnames, stay_in=False):
+    def add_computehost(self, pool, hosts, stay_in=False):
         """Add compute host(s) to an aggregate.
 
         Each host must exist and be in the freepool, otherwise raise an error.
@@ -348,8 +344,8 @@ class ReservationPool(NovaClientWrapper):
         Raise an aggregate exception if something wrong.
         """
 
-        if not isinstance(hypervisor_hostnames, list):
-            hypervisor_hostnames = [hypervisor_hostnames]
+        if not isinstance(hosts, list):
+            hosts = [hosts]
 
         added_hosts = []
         removed_hosts = []
@@ -363,8 +359,7 @@ class ReservationPool(NovaClientWrapper):
             raise manager_exceptions.NoFreePool()
 
         try:
-            # TODO!!
-            for host in hypervisor_hostnames:
+            for host in hosts:
                 if freepool_agg.id != agg.id and not stay_in:
                     if host not in freepool_agg.hosts:
                         raise manager_exceptions.HostNotInFreePool(
@@ -385,7 +380,7 @@ class ReservationPool(NovaClientWrapper):
                     #
                     # NOTE(priteau): Preemptibles should not be used with
                     # instance reservation yet.
-                    # TODO self.terminate_preemptibles(host)
+                    # TODO!! self.terminate_preemptibles(host)
 
                 LOG.info("adding host '%(host)s' to aggregate %(id)s",
                          {'host': host, 'id': agg.id})
@@ -418,11 +413,11 @@ class ReservationPool(NovaClientWrapper):
         hosts = self.get_computehosts(pool)
         self.remove_computehost(pool, hosts)
 
-    def remove_computehost(self, pool, hypervisor_hostnames):
+    def remove_computehost(self, pool, hosts):
         """Remove compute host(s) from an aggregate."""
 
-        if not isinstance(hypervisor_hostnames, list):
-            hypervisor_hostnames = [hypervisor_hostnames]
+        if not isinstance(hosts, list):
+            hosts = [hosts]
 
         agg = self.get_aggregate_from_name_or_id(pool)
 
@@ -464,7 +459,6 @@ class ReservationPool(NovaClientWrapper):
     def add_project(self, pool, project_id):
         """Add a project to an aggregate."""
 
-        # TODO: we should make this work with the request filter?
         metadata = {project_id: self.config.project_id_key}
 
         agg = self.get_aggregate_from_name_or_id(pool)
@@ -481,7 +475,6 @@ class ReservationPool(NovaClientWrapper):
 
     def terminate_preemptibles(self, host):
         """Terminate preemptible instances running on host"""
-        raise Exception("TODO!")
         for server in self.nova.servers.list(
                 search_opts={"host": host, "all_tenants": 1}):
             try:
