@@ -666,7 +666,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
                 if key.startswith("resources:"):
                     rc = key.split(":")[1]
-                    values[rc] = int(key)
+                    values[rc] = int(value)
 
         values["resource_inventory"] = json.dumps(resource_inventory)
         values["resource_traits"] = json.dumps(resource_traits)
