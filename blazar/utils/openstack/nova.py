@@ -566,12 +566,24 @@ class NovaInventory(NovaClientWrapper):
 
 class PlacementReservationPool(object):
     def __init__(self):
-        self.nova_client = ReservationPool()
+        self.old_pool = ReservationPool()
         # used to manage placement aggregates
         self.placement_client = placement.BlazarPlacementClient()
 
+    @property
+    def nova(self):
+        # 2.41 is the first microversion where we get the aggregate uuid
+        # and it was available in Ocata
+        nova = BlazarNovaClient(version="2.41",
+                                username=self.username,
+                                password=self.password,
+                                user_domain_name=self.user_domain_name,
+                                project_name=self.project_name,
+                                project_domain_name=self.project_domain_name)
+        return nova
+
     def get_aggregate_id_from_name(self, name):
-        all_aggregates = self.nova_client.nova.aggregates.list()
+        all_aggregates =  self.nova.aggregates.list()
         # TODO(johngarbutt): this is horrible, but the only API way
         for agg in all_aggregates:
             if name == agg.name:
@@ -579,18 +591,17 @@ class PlacementReservationPool(object):
         raise manager_exceptions.AggregateNotFound(pool=name)
 
     def create(self, name=None, az=None, metadata=None):
-        return self.nova_client.create(name, az, metadata)
+        return self.old_pool.create(name, az, metadata)
 
     def delete(self, nova_aggregate_id):
         # TODO: remove all hosts in placement? its expensive!
-        return self.nova_client.delete(nova_aggregate_id, force=True)
+        return self.old_pool.delete(nova_aggregate_id, force=True)
 
     def add_computehost(self, nova_aggregate_id, computehost):
         rp = self.placement_client.get_resource_provider(
             computehost["hypervisor_hostname"])
 
-        nova_client = BlazarNovaClient(version="2.41")
-        nova_agg = nova_client.aggregates.get(nova_aggregate_id)
+        nova_agg = self.nova.aggregates.get(nova_aggregate_id)
         aggregate_uuid = nova_agg.uuid
 
         self.placement_client.add_rp_to_aggregate(
@@ -600,8 +611,7 @@ class PlacementReservationPool(object):
         rp = self.placement_client.get_resource_provider(
             computehost["hypervisor_hostname"])
 
-        nova_client = BlazarNovaClient(version="2.41")
-        nova_agg = nova_client.aggregates.get(nova_aggregate_id)
+        nova_agg =  self.nova.aggregates.get(nova_aggregate_id)
         aggregate_uuid = nova_agg.uuid
 
         self.placement_client.remove_rp_from_aggregate(
