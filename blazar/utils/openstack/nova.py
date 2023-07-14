@@ -574,12 +574,13 @@ class PlacementReservationPool(object):
     def nova(self):
         # 2.41 is the first microversion where we get the aggregate uuid
         # and it was available in Ocata
-        nova = BlazarNovaClient(version="2.41",
-                                username=self.username,
-                                password=self.password,
-                                user_domain_name=self.user_domain_name,
-                                project_name=self.project_name,
-                                project_domain_name=self.project_domain_name)
+        nova = BlazarNovaClient(
+            version="2.41",
+            username=CONF.os_admin_username,
+            password=CONF.os_admin_password,
+            user_domain_name=CONF.os_admin_user_domain_name,
+            project_name=CONF.os_admin_project_name,
+            project_domain_name=CONF.os_admin_project_domain_name)
         return nova
 
     def get_aggregate_id_from_name(self, name):
