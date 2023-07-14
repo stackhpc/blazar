@@ -598,7 +598,7 @@ class PlacementReservationPool(object):
 
         nova_client = BlazarNovaClient(version="2.41")
         nova_agg = nova_client.aggregates.get(nova_aggregate_id)
-        aggregate_uuid = nova_agg["uuid"]
+        aggregate_uuid = nova_agg.uuid
 
         self.placement_client.add_rp_to_aggregate(
             aggregate_uuid, rp["uuid"])
@@ -609,7 +609,7 @@ class PlacementReservationPool(object):
 
         nova_client = BlazarNovaClient(version="2.41")
         nova_agg = nova_client.aggregates.get(nova_aggregate_id)
-        aggregate_uuid = nova_agg["uuid"]
+        aggregate_uuid = nova_agg.uuid
 
         self.placement_client.remove_rp_from_aggregate(
             aggregate_uuid, rp["uuid"])
