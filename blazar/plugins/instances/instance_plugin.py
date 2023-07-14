@@ -300,13 +300,16 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 host_inventory = {cr['resource_class']: cr for cr in host_crs}
                 host_is_ok = False
                 for rc, request in resource_extras.items():
-                    host_inventory = host_inventory[rc]
-                    host_max = host_inventory['max_unit']
-                    if request <= host_max:
+                    rc_info = host_inventory.get(rc)
+                    if not rc_info:
+                        host_is_ok = False
+                        LOG.debug(f"Filter out, no {rc} for {host}")
+                        break
+                    if rc_info and request <= rc_info['max_unit']:
                         host_is_ok = True
                     else:
                         host_is_ok = False
-                        LOG.debug(f"Filter out becase of {rc} for {host}")
+                        LOG.debug(f"Filter out, too many {rc} for {host}")
                         break
                 if host_is_ok:
                     cr_hosts.append(host)
