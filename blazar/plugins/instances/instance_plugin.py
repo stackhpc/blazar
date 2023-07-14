@@ -664,7 +664,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                     elif value == "forbidden":
                         resource_traits[trait] = "forbidden"
 
-                if key.startswith("resource:"):
+                if key.startswith("resources:"):
                     rc = key.split(":")[1]
                     values[rc] = int(key)
 
