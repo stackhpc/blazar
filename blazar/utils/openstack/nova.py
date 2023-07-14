@@ -573,30 +573,43 @@ class NovaInventory(NovaClientWrapper):
 
 class PlacementReservationPool(object):
     def __init__(self):
-        self.config = CONF.nova
-        self.freepool_name = self.config.aggregate_freepool_name
-
         self.nova_client = ReservationPool()
         # used to manage placement aggregates
         self.placement_client = placement.BlazarPlacementClient()
 
+    def get_aggregate_id_from_name(self, name):
+        all_aggregates = self.nova_client.nova.aggregates.list()
+        # TODO(johngarbutt): this is horrible, but the only API way
+        for agg in all_aggregates:
+            if name == agg.name:
+                return agg.id
+        raise manager_exceptions.AggregateNotFound(pool=name)
+
     def create(self, name=None, az=None, metadata=None):
         return self.nova_client.create(name, az, metadata)
 
-    def delete(self, agregate_id):
+    def delete(self, nova_aggregate_id):
         # TODO: remove all hosts in placement? its expensive!
-        return self.nova_client.delete(agregate_id, force=True)
+        return self.nova_client.delete(nova_aggregate_id, force=True)
 
-    def add_computehost(self, reservation, computehost):
-        aggregate_id = reservation["aggregate_id"]
+    def add_computehost(self, nova_aggregate_id, computehost):
         rp = self.placement_client.get_resource_provider(
             computehost["hypervisor_hostname"])
+
+        nova_client = BlazarNovaClient(version="2.41")
+        nova_agg = nova_client.aggregates.get(nova_aggregate_id)
+        aggregate_uuid = nova_agg["uuid"]
+
         self.placement_client.add_rp_to_aggregate(
-            aggregate_id, rp["uuid"])
+            aggregate_uuid, rp["uuid"])
 
-    def remove_computehost(self, reservation, computehost):
-        aggregate_id = reservation["aggregate_id"]
+    def remove_computehost(self, nova_aggregate_id, computehost):
         rp = self.placement_client.get_resource_provider(
             computehost["hypervisor_hostname"])
+
+        nova_client = BlazarNovaClient(version="2.41")
+        nova_agg = nova_client.aggregates.get(nova_aggregate_id)
+        aggregate_uuid = nova_agg["uuid"]
+
         self.placement_client.remove_rp_from_aggregate(
-            aggregate_id, rp["uuid"])
+            aggregate_uuid, rp["uuid"])

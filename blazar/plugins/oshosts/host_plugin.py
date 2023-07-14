@@ -364,10 +364,9 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
 
             self.placement_client.create_reservation_provider(hostname)
 
-            pool = nova.ReservationPool()
-            pool.add_computehost(self.freepool_name,
-                                 host_details['service_name'],
-                                 host_details['hypervisor_hostname'])
+            pool = nova.PlacementReservationPool()
+            freepool_id = pool.get_aggregate_id_from_name(self.freepool_name)
+            pool.add_computehost(freepool_id, host_details)
 
             host = None
             cantaddextracapability = []
@@ -379,8 +378,7 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 # We need to rollback
                 # TODO(sbauza): Investigate use of Taskflow for atomic
                 # transactions
-                pool.remove_computehost(self.freepool_name,
-                                        host_details['service_name'])
+                pool.remove_computehost(freepool_id, host_details)
                 self.placement_client.delete_reservation_provider(hostname)
                 raise e
             for key in extra_capabilities:
