@@ -281,7 +281,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         if resource_properties:
             filters += plugins_utils.convert_requirements(resource_properties)
 
-        LOG.debug(f"Filters are: {filters}")
+        LOG.debug(f"Filters are: {filters} {cpus} {resource_inventory}")
         hosts = db_api.reservable_host_get_all_by_queries(filters)
 
         LOG.debug(f"Found some hosts from db: {hosts}")
