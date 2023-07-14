@@ -479,7 +479,7 @@ class BlazarPlacementClient(object):
             aggregate_info["aggregates"].append(aggregate_uuid)
             # NOTE: this includes resource_provider_generation
             # to ensure an atomic update
-            return self._put_rp_aggregates(aggregate_info)
+            return self._put_rp_aggregates(rp_uuid, aggregate_info)
 
     def remove_rp_from_aggregate(self, aggregate_uuid, rp_uuid):
         aggregate_info = self.get_rp_aggregates(rp_uuid)
@@ -490,4 +490,4 @@ class BlazarPlacementClient(object):
             aggregate_info["aggregates"] = new_aggregates
             # NOTE: this includes resource_provider_generation
             # to ensure an atomic update
-            return self._put_rp_aggregates(aggregate_info)
+            return self._put_rp_aggregates(rp_uuid, aggregate_info)
