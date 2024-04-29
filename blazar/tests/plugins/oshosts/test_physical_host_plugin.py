@@ -213,14 +213,90 @@ class PhysicalHostPluginTestCase(tests.TestCase):
         self.db_host_list.assert_called_once_with()
         del self.service_utils
 
-    def test_create_host_without_extra_capabilities(self):
+    @mock.patch.object(placement.BlazarPlacementClient, 'get_traits')
+    @mock.patch.object(placement.BlazarPlacementClient, 'get_inventory')
+    @mock.patch.object(placement.BlazarPlacementClient,
+                       'get_resource_provider')
+    def test_create_host_without_extra_capabilities(self, mock_get_rp,
+                                                    mock_get_inventory,
+                                                    mock_get_traits):
+        mock_get_rp.return_value = {"uuid": "fake_rp_uuid"}
+        mock_get_traits.return_value = ["CUSTOM_HW_FPGA_CLASS1"]
+        mock_get_inventory.return_value = {
+            "inventories": {
+                "DISK_GB": {
+                    "allocation_ratio": 1.0,
+                    "max_unit": 35,
+                    "min_unit": 1,
+                    "reserved": 0,
+                    "step_size": 1,
+                    "total": 35
+                },
+                "MEMORY_MB": {
+                    "allocation_ratio": 1.5,
+                    "max_unit": 5825,
+                    "min_unit": 1,
+                    "reserved": 512,
+                    "step_size": 1,
+                    "total": 5825
+                },
+                "VCPU": {
+                    "allocation_ratio": 16.0,
+                    "max_unit": 4,
+                    "min_unit": 1,
+                    "reserved": 0,
+                    "step_size": 1,
+                    "total": 4
+                }
+            },
+            "resource_provider_generation": 7
+        }
         self.get_extra_capabilities.return_value = {}
         host = self.fake_phys_plugin.create_computehost(self.fake_host)
         self.db_host_create.assert_called_once_with(self.fake_host)
         self.prov_create.assert_called_once_with('hypvsr1')
         self.assertEqual(self.fake_host, host)
+        mock_get_inventory.assert_called_once_with("fake_rp_uuid")
+        mock_get_traits.assert_called_once_with("fake_rp_uuid")
 
-    def test_create_host_with_extra_capabilities(self):
+    @mock.patch.object(placement.BlazarPlacementClient, 'get_traits')
+    @mock.patch.object(placement.BlazarPlacementClient, 'get_inventory')
+    @mock.patch.object(placement.BlazarPlacementClient,
+                       'get_resource_provider')
+    def test_create_host_with_extra_capabilities(self, mock_get_rp,
+                                                 mock_get_inventory,
+                                                 mock_get_traits):
+        mock_get_rp.return_value = {"uuid": "fake_rp_uuid"}
+        mock_get_traits.return_value = ["CUSTOM_HW_FPGA_CLASS1"]
+        mock_get_inventory.return_value = {
+            "inventories": {
+                "DISK_GB": {
+                    "allocation_ratio": 1.0,
+                    "max_unit": 35,
+                    "min_unit": 1,
+                    "reserved": 0,
+                    "step_size": 1,
+                    "total": 35
+                },
+                "MEMORY_MB": {
+                    "allocation_ratio": 1.5,
+                    "max_unit": 5825,
+                    "min_unit": 1,
+                    "reserved": 512,
+                    "step_size": 1,
+                    "total": 5825
+                },
+                "VCPU": {
+                    "allocation_ratio": 16.0,
+                    "max_unit": 4,
+                    "min_unit": 1,
+                    "reserved": 0,
+                    "step_size": 1,
+                    "total": 4
+                }
+            },
+            "resource_provider_generation": 7
+        }
         fake_host = self.fake_host.copy()
         fake_host.update({'foo': 'bar'})
         # NOTE(sbauza): 'id' will be pop'd, we need to keep track of it
@@ -236,6 +312,8 @@ class PhysicalHostPluginTestCase(tests.TestCase):
         self.prov_create.assert_called_once_with('hypvsr1')
         self.db_host_extra_capability_create.assert_called_once_with(fake_capa)
         self.assertEqual(fake_host, host)
+        mock_get_inventory.assert_called_once_with("fake_rp_uuid")
+        mock_get_traits.assert_called_once_with("fake_rp_uuid")
 
     def test_create_host_with_capabilities_too_long(self):
         fake_host = self.fake_host.copy()
