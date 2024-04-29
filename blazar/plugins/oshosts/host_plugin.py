@@ -398,6 +398,37 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise manager_ex.CantAddExtraCapability(
                     keys=cantaddextracapability,
                     host=host['id'])
+
+            # Check for placement details
+            hostname = host_details['hypervisor_hostname']
+            rp = self.placement_client.get_resource_provider(hostname)
+            if rp is None:
+                raise manager_ex.ResourceProviderNotFound(host=hostname)
+
+            inventories = self.placement_client.get_inventory(rp['uuid'])
+            for rc, inventory in inventories['inventories'].items():
+                reserved = int(inventory['reserved'])
+                # Hack for when ironic nodes are not currently available
+                if reserved == 1:
+                    reserved = 0
+                cr = {
+                    'computehost_id': host['id'],
+                    'resource_class': rc,
+                    'allocation_ratio': inventory['allocation_ratio'],
+                    'total': inventory['total'],
+                    'reserved': reserved,
+                    'max_unit': inventory['max_unit'],
+                    'min_unit': inventory['min_unit'],
+                }
+                db_api.host_resource_inventory_create(cr)
+
+            traits = self.placement_client.get_traits(rp['uuid'])
+            for trait in traits:
+                db_api.host_trait_create({
+                    'computehost_id': host['id'],
+                    'trait': trait,
+                })
+
             return self.get_computehost(host['id'])
 
     def is_updatable_extra_capability(self, capability, property_name):
