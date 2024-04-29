@@ -42,7 +42,6 @@ class Database(fixtures.Fixture):
         cfg.CONF.set_override('connection', str(database_connection),
                               group='database')
         facade_wrapper._clear_engine()
-        self.engine = facade_wrapper.get_engine()
 
         db_api.setup_db()
         self.addCleanup(db_api.drop_db)
@@ -86,3 +85,11 @@ class DBTestCase(TestCase):
             _DB_CACHE = Database()
 
         self.useFixture(_DB_CACHE)
+
+
+class FakeServiceCatalog(object):
+    def __init__(self, catalog):
+        self._catalog = catalog
+
+    def normalize_catalog(self):
+        return self._catalog
