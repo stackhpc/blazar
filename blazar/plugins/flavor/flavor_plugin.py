@@ -14,10 +14,12 @@ import collections
 import datetime
 import json
 
+from novaclient import exceptions as nova_exceptions
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import strutils
 
+from blazar import context
 from blazar.db import api as db_api
 from blazar.manager import exceptions as mgr_exceptions
 from blazar.plugins import base
@@ -48,8 +50,7 @@ class FlavorPlugin(base.BasePlugin):
 
     def __init__(self):
         super().__init__()
-        self.freepool_name = CONF.nova.aggregate_freepool_name
-        self.placement_client = placement.BlazarPlacementClient()
+        self._placement_client = placement.BlazarPlacementClient()
         self._host_plugin = host_plugin.PhysicalHostPlugin()
         self._instance_plugin = instance_plugin.VirtualInstancePlugin()
 
@@ -65,11 +66,15 @@ class FlavorPlugin(base.BasePlugin):
 
     def allocation_candidates(self, reservation):
         """Return a list of candidate host_ids."""
+        host_ids, _ = self._pick_hosts(reservation)
+        return host_ids
+
+    def _pick_hosts(self, reservation):
+        self._validate_reservation_params(reservation)
+
         flavor_id = reservation['flavor_id']
-        resource_request, resource_traits = self._get_flavor_details(flavor_id)
-        # cache this information for reserve_resource to use
-        reservation['resource_properties'] = resource_request
-        reservation['resource_traits'] = resource_traits
+        resource_request, resource_traits, source_flavor = \
+            self._get_flavor_details(flavor_id)
 
         affinity = strutils.bool_from_string(
             reservation['affinity'], default=None)
@@ -85,7 +90,25 @@ class FlavorPlugin(base.BasePlugin):
         if affinity:
             raise NotImplementedError("Affinity not supported yet")
 
-        return [host['id'] for host in candidates]
+        # return just enough hosts to satisfy the request
+        while len(candidates) > req_amount:
+            candidates.pop()
+        host_ids = [host['id'] for host in candidates]
+        return host_ids, source_flavor
+
+    def _validate_reservation_params(self, values):
+        marshall_attributes = set([
+            'amount', 'flavor_id', 'affinity', 'start_date', 'end_date',
+        ])
+        missing_attr = marshall_attributes - set(values.keys())
+        if missing_attr:
+            raise mgr_exceptions.MissingParameter(param=','.join(missing_attr))
+
+        try:
+            values['amount'] = strutils.validate_integer(
+                values['amount'], "amount", 1, db_api.DB_MAX_INT)
+        except ValueError as e:
+            raise mgr_exceptions.MalformedParameter(str(e))
 
     def _query_available_hosts(self, start_date, end_date,
                                resource_request, resource_traits):
@@ -172,15 +195,26 @@ class FlavorPlugin(base.BasePlugin):
                   f"we have {len(hosts_list)} slots.")
         return hosts_list
 
+    def _get_cached_flavor(self, instance_reservation):
+        source_flavor = instance_reservation["resource_properties"]
+        if source_flavor and "OS-FLV-EXT-DATA:ephemeral" in source_flavor:
+            return json.loads(source_flavor)
+
     def _max_usages(self, reservations):
         """For reservation list for a host, find resource high watermark."""
         def resource_usage_by_event(event):
             instance_reservation = event['reservation']['instance_reservation']
-            # TODO(johngarbutt): need the DB changes for this bit!
-            resource_inventory = instance_reservation.get('resource_inventory')
-            if resource_inventory:
-                resource_inventory = json.loads(resource_inventory)
-            return resource_inventory
+            request_count = instance_reservation["amount"]
+            source_flavor = self._get_cached_flavor(instance_reservation)
+            if source_flavor:
+                flavor_resource_inventory, _ = \
+                    self._estimate_flavor_resources(source_flavor)
+                return {
+                    rc: amount * request_count
+                    for rc, amount in flavor_resource_inventory.items()
+                    if amount > 0
+                }
+            raise NotImplementedError("Found unsupported instance reservation")
 
         # Get sorted list of events for all reservations
         # that exist in the target time window
@@ -213,14 +247,9 @@ class FlavorPlugin(base.BasePlugin):
 
             LOG.debug(f"after {event}\nusage is: {current_usage}\n"
                       f"max is: {max_usage}")
-
         return max_usage
 
     def _get_flavor_details(self, flavor_id):
-        resource_request = {}
-        resource_traits = {}
-        source_flavor = {}
-
         # access nova using the user token,
         # to ensure we can only see flavors they can see
         user_client = nova.NovaClientWrapper()
@@ -228,6 +257,17 @@ class FlavorPlugin(base.BasePlugin):
         source_flavor = flavor.to_dict()
         # TODO(johngarbutt): use newer api to get this above
         source_flavor["extra_specs"] = flavor.get_keys()
+
+        # NOTE(johngarbutt): we are only partially reproducing all the
+        # options that are available in a flavor.
+        resource_request, resource_traits = \
+            self._estimate_flavor_resources(source_flavor)
+
+        return (resource_request, resource_traits, source_flavor)
+
+    def _estimate_flavor_resources(self, source_flavor):
+        resource_request = {}
+        resource_traits = {}
 
         # add default resource requests
         resource_request["VCPU"] = int(source_flavor['vcpus'])
@@ -250,21 +290,130 @@ class FlavorPlugin(base.BasePlugin):
                     resource_traits[trait] = "required"
                 elif value == "forbidden":
                     resource_traits[trait] = "forbidden"
+                else:
+                    raise mgr_exceptions.MalformedParameter(
+                        "Invalid value for trait %s" % trait)
 
             if key.startswith("resources:"):
                 rc = key.split(":")[1]
                 resource_request[rc] = int(value)
 
-        return resource_request, resource_traits
+        # TODO(johngarbutt): look for other extra specs that we
+        # don't support and error out the reservation if we find any
+
+        return (resource_request, resource_traits)
 
     def reserve_resource(self, reservation_id, values):
-        raise NotImplementedError("reserve_resource not supported yet")
+        host_ids, source_flavor = self._pick_hosts(values)
+
+        instance_reservation_val = {
+            'reservation_id': reservation_id,
+            # use flavor display values,
+            # even though we probably reserve different resources
+            'vcpus': source_flavor["vcpus"],
+            'memory_mb': source_flavor["ram"],
+            'disk_gb': source_flavor["disk"],
+            'amount': values['amount'],
+            'affinity': None,
+            'resource_properties': json.dumps(source_flavor)
+        }
+        instance_reservation = db_api.instance_reservation_create(
+            instance_reservation_val)
+
+        for host_id in host_ids:
+            db_api.host_allocation_create({'compute_host_id': host_id,
+                                          'reservation_id': reservation_id})
+
+        try:
+            flavor_id, aggregate_id = \
+                self._create_resources(instance_reservation)
+        except nova_exceptions.ClientException:
+            LOG.exception("Failed to create Nova resources "
+                          "for reservation %s", reservation_id)
+            self._cleanup_resources(instance_reservation)
+            raise mgr_exceptions.NovaClientError()
+
+        db_api.instance_reservation_update(instance_reservation['id'],
+                                           {'flavor_id': flavor_id,
+                                            'aggregate_id': aggregate_id})
+
+        return instance_reservation['id']
+
+    def _create_resources(self, instance_reservation):
+        reservation_id = instance_reservation['reservation_id']
+        # TODO(johngarbutt) we ignore affinity for now
+        # user_client = nova.NovaClientWrapper()
+        # reserved_group = user_client.nova.server_groups.create(
+        #    instance_plugin.RESERVATION_PREFIX + ':' + reservation_id,
+        #    'affinity' if inst_reservation['affinity'] else 'anti-affinity'
+        #    )
+
+        reserved_flavor = self._create_flavor(instance_reservation)
+
+        ctx = context.current()
+        pool = nova.ReservationPool()
+        pool_metadata = {
+            instance_plugin.RESERVATION_PREFIX: reservation_id,
+            # this is added to work with Nova configuration options
+            # [scheduler]limit_tenants_to_placement_aggregate=True and
+            # [scheduler]placement_aggregate_required_for_tenants=True
+            'filter_tenant_id': ctx.project_id,
+            # NOTE(johngarbutt): added to work with
+            # [scheduler]enable_isolated_aggregate_filtering=True
+            # such that only flavors that request this trait can be
+            # used within this aggregate
+            'trait:CUSTOM_BLAZAR_RESERVATION': 'required',
+        }
+        agg = pool.create(name=reservation_id, metadata=pool_metadata)
+
+        # TODO(johngarbutt) maybe add inventory here, but mark
+        # then inventory as reserved to start with?
+        self._placement_client.create_reservation_class(reservation_id)
+
+        return reserved_flavor["id"], agg["id"]
+
+    def _create_flavor(self, instance_reservation):
+        source_flavor = self._get_cached_flavor(instance_reservation)
+        if not source_flavor:
+            raise NotImplementedError("Found unsupported instance reservation")
+
+        reservation_id = instance_reservation['reservation_id']
+        flavor_details = {
+            'flavorid': reservation_id,
+            'name': instance_plugin.RESERVATION_PREFIX + ":" + reservation_id,
+            'vcpus': source_flavor['vcpus'],
+            'ram': source_flavor['ram'],
+            'disk': source_flavor['disk'],
+            'is_public': False
+        }
+        # create flavor using admin access
+        reserved_flavor = self._instance_plugin.nova.nova.flavors.create(
+            **flavor_details)
+
+        # Set extra specs to the flavor
+        rsv_id_rc_format = reservation_id.upper().replace("-", "_")
+        reservation_rc = "resources:CUSTOM_RESERVATION_" + rsv_id_rc_format
+        extra_specs = source_flavor["extra_specs"].copy()
+        extra_specs[instance_plugin.FLAVOR_EXTRA_SPEC] = reservation_id
+        extra_specs[reservation_rc] = "1"
+        # NOTE(johngarbutt): added to work with isolated aggregate filtering
+        extra_specs["trait:CUSTOM_BLAZAR_RESERVATION"] = "required"
+        reserved_flavor.set_keys(extra_specs)
+
+        return reserved_flavor
+
+    def _cleanup_resources(self, instance_reservation):
+        self._instance_plugin.cleanup_resources(instance_reservation)
 
     def update_reservation(self, reservation_id, values):
         raise NotImplementedError("update_reservation not supported yet")
 
     def on_start(self, resource_id):
-        raise NotImplementedError("on_start not supported yet")
+        # TODO(johngarbutt): should we also add the trait
+        # we are using above to our chosen hosts?
+        # Or the host plugin add this when we add a host?
+        # Or should we leave it to the operator like we do here?
+        self._instance_plugin.on_start(resource_id)
 
     def on_end(self, resource_id):
-        raise NotImplementedError("on_end not supported yet")
+        self._instance_plugin.on_end(resource_id)
