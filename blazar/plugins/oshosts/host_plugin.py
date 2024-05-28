@@ -374,11 +374,14 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         with trusts.create_ctx_from_trust(trust_id):
             inventory = nova.NovaInventory()
-            servers = inventory.get_servers_per_host(host_ref)
-            if servers:
-                raise manager_ex.HostHavingServers(host=host_ref,
-                                                   servers=servers)
+            # TODO(johngarbutt): hack to work around full hypervisors!
+            #servers = inventory.get_servers_per_host(host_ref)
+            #if servers:
+            #    raise manager_ex.HostHavingServers(host=host_ref,
+            #                                       servers=servers)
             host_details = inventory.get_host_details(host_ref)
+            LOG.debug(f"host details: {host_details}")
+            hostname = host_details['hypervisor_hostname']
             # NOTE(sbauza): Only last duplicate name for same extra capability
             # will be stored
             to_store = set(host_values.keys()) - set(host_details.keys())
@@ -390,12 +393,11 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
             if any([len(key) > 64 for key in extra_capabilities_keys]):
                 raise manager_ex.ExtraCapabilityTooLong()
 
-            self.placement_client.create_reservation_provider(
-                host_details['hypervisor_hostname'])
+            self.placement_client.create_reservation_provider(hostname)
 
-            pool = nova.ReservationPool()
-            pool.add_computehost(self.freepool_name,
-                                 host_details['service_name'])
+            pool = nova.PlacementReservationPool()
+            freepool_id = pool.get_aggregate_id_from_name(self.freepool_name)
+            pool.add_computehost(freepool_id, host_details)
 
             host = None
             cantaddextracapability = []
@@ -407,10 +409,8 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 # We need to rollback
                 # TODO(sbauza): Investigate use of Taskflow for atomic
                 # transactions
-                pool.remove_computehost(self.freepool_name,
-                                        host_details['service_name'])
-                self.placement_client.delete_reservation_provider(
-                    host_details['hypervisor_hostname'])
+                pool.remove_computehost(freepool_id, host_details)
+                self.placement_client.delete_reservation_provider(hostname)
                 raise e
             for key in extra_capabilities:
                 values = {'computehost_id': host['id'],
@@ -425,6 +425,36 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise manager_ex.CantAddExtraCapability(
                     keys=cantaddextracapability,
                     host=host['id'])
+
+            # Check for any custom resource classes
+            rp = self.placement_client.get_resource_provider(hostname)
+            if rp is None:
+                raise manager_ex.ResourceProviderNotFound(host=hostname)
+
+            inventories = self.placement_client.get_inventory(rp['uuid'])
+            for rc, inventory in inventories['inventories'].items():
+                reserved = int(inventory['reserved'])
+                # Hack for when ironic nodes are not currently available
+                if reserved == 1:
+                    reserved = 0
+                cr = {
+                    'computehost_id': host['id'],
+                    'resource_class': rc,
+                    'allocation_ratio': inventory['allocation_ratio'],
+                    'total': inventory['total'],
+                    'reserved':  reserved,
+                    'max_unit': inventory['max_unit'],
+                    'min_unit': inventory['min_unit'],
+                }
+                db_api.host_custom_resource_create(cr)
+
+            traits = self.placement_client.get_traits(rp['uuid'])
+            for trait in traits['traits']:
+                db_api.host_trait_create({
+                    'computehost_id': host['id'],
+                    'trait': trait,
+                })
+
             return self.get_computehost(host['id'])
 
     def is_updatable_extra_capability(self, capability, property_name):
@@ -509,16 +539,17 @@ class PhysicalHostPlugin(base.BasePlugin, nova.NovaClientWrapper):
                 )
 
             inventory = nova.NovaInventory()
-            servers = inventory.get_servers_per_host(
-                host['hypervisor_hostname'])
-            if servers:
-                raise manager_ex.HostHavingServers(
-                    host=host['hypervisor_hostname'], servers=servers)
+            # TODO(johng): hack to allow remove host!
+            #servers = inventory.get_servers_per_host(
+            #    host['hypervisor_hostname'])
+            #if servers:
+            #    raise manager_ex.HostHavingServers(
+            #        host=host['hypervisor_hostname'], servers=servers)
 
             try:
-                pool = nova.ReservationPool()
-                pool.remove_computehost(self.freepool_name,
-                                        host['service_name'])
+                pool = nova.PlacementReservationPool()
+                freepool_id = pool.get_aggregate_id_from_name(self.freepool_name)
+                pool.remove_computehost(freepool_id, host)
                 self.placement_client.delete_reservation_provider(
                     host['hypervisor_hostname'])
                 # NOTE(sbauza): Extracapabilities will be destroyed thanks to

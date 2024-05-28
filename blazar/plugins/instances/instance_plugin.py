@@ -14,6 +14,7 @@
 
 import collections
 import datetime
+import json
 import retrying
 
 from novaclient import exceptions as nova_exceptions
@@ -90,10 +91,24 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         return free, non_free
 
-    def max_usages(self, host, reservations):
-        def resource_usage_by_event(event, resource_type):
-            return event['reservation']['instance_reservation'][resource_type]
+    def _max_usages(self, reservations):
+        def resource_usage_by_event(event):
+            instance_reservation = event['reservation']['instance_reservation']
+            resource_inventory = instance_reservation['resource_inventory']
+            if resource_inventory:
+                resource_inventory = json.loads(resource_inventory)
+            if not resource_inventory:
+                # backwards compatible with older reservations
+                # that do not have a resource_inventory populated
+                resource_inventory = {
+                    "VCPU": instance_reservation['vcpus'],
+                    "MEMORY_MB": instance_reservation['memory_mb'],
+                    "DISK_GB": instance_reservation['disk_gb'],
+                }
+            return resource_inventory
 
+        # Get sorted list of events for all reservations
+        # that exist in the target time window
         events_list = []
         for r in reservations:
             fetched_events = db_api.event_get_all_sorted_by_filters(
@@ -101,47 +116,99 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 filters={'lease_id': r['lease_id']})
             events_list.extend([{'event': e, 'reservation': r}
                                 for e in fetched_events])
-
         events_list.sort(key=lambda x: x['event']['time'])
 
-        max_vcpus = max_memory = max_disk = 0
-        current_vcpus = current_memory = current_disk = 0
-
+        current_usage = collections.defaultdict(int)
+        max_usage = collections.defaultdict(int)
         for event in events_list:
+            usage = resource_usage_by_event(event)
+
             if event['event']['event_type'] == 'start_lease':
-                current_vcpus += resource_usage_by_event(event, 'vcpus')
-                current_memory += resource_usage_by_event(event, 'memory_mb')
-                current_disk += resource_usage_by_event(event, 'disk_gb')
-                if max_vcpus < current_vcpus:
-                    max_vcpus = current_vcpus
-                if max_memory < current_memory:
-                    max_memory = current_memory
-                if max_disk < current_disk:
-                    max_disk = current_disk
+                LOG.debug(f"found start{event} with {usage}")
+                for rc, usage_amount in usage.items():
+                    current_usage[rc] += usage_amount
+                    # TODO(johngarbutt) what if the max usage is
+                    # actually outside the target time window?
+                    if max_usage[rc] < current_usage[rc]:
+                        max_usage[rc] = current_usage[rc]
+
             elif event['event']['event_type'] == 'end_lease':
-                current_vcpus -= resource_usage_by_event(event, 'vcpus')
-                current_memory -= resource_usage_by_event(event, 'memory_mb')
-                current_disk -= resource_usage_by_event(event, 'disk_gb')
+                for rc, usage_amount in usage.items():
+                    current_usage[rc] -= usage_amount
 
-        return max_vcpus, max_memory, max_disk
+            LOG.debug(f"after {event}\nusage is: {current_usage}\n"
+                      f"max is: {max_usage}")
 
-    def get_hosts_list(self, host_info, cpus, memory, disk):
-        hosts_list = []
+        return max_usage
+
+    def _get_hosts_list(self, host_info, resource_request):
+        # For each host, look how many slots are available,
+        # given the current list of reservations within the
+        # target time window for this host
+
+        # get high water mark of usage during all reservations
+        max_usage = self._max_usages(host_info['reservations'])
+        LOG.debug(f"Max usage {host_info['host']['hypervisor_hostname']} "
+                  f"is {max_usage}")
+
         host = host_info['host']
-        reservations = host_info['reservations']
-        max_cpus, max_memory, max_disk = self.max_usages(host,
-                                                         reservations)
-        used_cpus, used_memory, used_disk = (cpus, memory, disk)
-        while (max_cpus + used_cpus <= host['vcpus'] and
-               max_memory + used_memory <= host['memory_mb'] and
-               max_disk + used_disk <= host['local_gb']):
+        host_crs = db_api.host_custom_resource_get_all_per_host(host['id'])
+        host_inventory = {cr['resource_class']: cr for cr in host_crs}
+        if not host_inventory:
+            # backwards compat for hosts added before we
+            # get info from placement
+            host_inventory = {
+                "VCPU": dict(total=host['vcpus'],
+                             allocation_ration=1.0),
+                "MEMORY_MB": dict(total=host['memory_mb'],
+                                  allocation_ration=1.0),
+                "DISK_GB": dict(total=host['local_gb'],
+                                allocation_ration=1.0),
+            }
+        LOG.debug(f"Inventory for {host_info['host']['hypervisor_hostname']} "
+                  f"is {host_inventory}")
+
+        # see how much room for slots we have
+        hosts_list = []
+        current_usage = max_usage.copy()
+
+        def has_free_slot():
+            for rc, requested in resource_request.items():
+                if not requested:
+                    # skip things like requests for 0 vcpus
+                    continue
+
+                host_details = host_inventory.get(rc)
+                if not host_details:
+                    # host doesn't have this sort of resource
+                    LOG.debug(f"resource not found for {rc} for "
+                              f"{host_info['host']['hypervisor_hostname']}")
+                    return False
+                usage = current_usage[rc]
+
+                if requested > host_details["max_unit"]:
+                    # requested more than the max allowed by this host
+                    LOG.debug(f"resource not found for {rc} for "
+                              f"{host_info['host']['hypervisor_hostname']}")
+                    return False
+
+                capacity = ((host_details["total"] - host_details["reserved"])
+                            * host_details["allocation_ratio"])
+                LOG.debug(f"Capacity is {capacity} for {rc} for "
+                          f"{host_info['host']['hypervisor_hostname']}")
+                return (usage + requested) <= capacity
+
+        while (has_free_slot()):
             hosts_list.append(host)
-            used_cpus += cpus
-            used_memory += memory
-            used_disk += disk
+            for rc, requested in resource_request.items():
+                current_usage[rc] += requested
+
+        LOG.debug(f"For host {host_info['host']['hypervisor_hostname']} "
+                  f"we have {len(hosts_list)} slots.")
         return hosts_list
 
     def allocation_candidates(self, reservation):
+        self._populate_values_with_flavor_info(reservation)
         return self.pickup_hosts(None, reservation)['added']
 
     def list_allocations(self, query):
@@ -186,6 +253,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def query_available_hosts(self, cpus=None, memory=None, disk=None,
                               resource_properties=None,
+                              resource_inventory=None,
+                              resource_traits=None,
                               start_date=None, end_date=None,
                               excludes_res=None):
         """Returns a list of available hosts for a reservation.
@@ -212,16 +281,58 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         if resource_properties:
             filters += plugins_utils.convert_requirements(resource_properties)
 
+        LOG.debug(f"Filters are: {filters} {cpus} {resource_inventory}")
         hosts = db_api.reservable_host_get_all_by_queries(filters)
+
+        LOG.debug(f"Found some hosts from db: {hosts}")
+
+        # Remove hosts without the required custom resources
+        resource_extras = resource_inventory.copy()
+        # TODO(johngarbutt) can we remove vcpus,disk,etc as a special case?
+        del resource_extras["VCPU"]
+        del resource_extras["MEMORY_MB"]
+        del resource_extras["DISK_GB"]
+        if resource_extras:
+            cr_hosts = []
+            for host in hosts:
+                host_crs = db_api.host_custom_resource_get_all_per_host(
+                        host['id'])
+                host_inventory = {cr['resource_class']: cr for cr in host_crs}
+                host_is_ok = False
+                for rc, request in resource_extras.items():
+                    rc_info = host_inventory.get(rc)
+                    if not rc_info:
+                        host_is_ok = False
+                        LOG.debug(f"Filter out, no {rc} for {host}")
+                        break
+                    if rc_info and request <= rc_info['max_unit']:
+                        host_is_ok = True
+                    else:
+                        host_is_ok = False
+                        LOG.debug(f"Filter out, too many {rc} for {host}")
+                        break
+                if host_is_ok:
+                    cr_hosts.append(host)
+            hosts = cr_hosts
+
+        LOG.debug(f"Filtered hosts by resource classes: {hosts}")
+
+        if resource_traits:
+            # TODO(johngarbutt): filter resource traits!
+            pass
+
+        # Look for all reservations that match our time window
+        # and group that by host
         free_hosts, reserved_hosts = self.filter_hosts_by_reservation(
             hosts,
             start_date - datetime.timedelta(minutes=CONF.cleaning_time),
             end_date + datetime.timedelta(minutes=CONF.cleaning_time),
             excludes_res)
 
+        # See how many free slots available per host
         available_hosts = []
         for host_info in (reserved_hosts + free_hosts):
-            hosts_list = self.get_hosts_list(host_info, cpus, memory, disk)
+            hosts_list = self._get_hosts_list(host_info, resource_inventory)
             available_hosts.extend(hosts_list)
 
         return available_hosts
@@ -242,11 +353,16 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         req_amount = values['amount']
         affinity = bool_from_string(values['affinity'], default=None)
 
+        # TODO need to check for custom resource requests!
+        resource_inventory = json.loads(values['resource_inventory'])
+        # TODO need to check traits as well!
+
         query_params = {
-            'cpus': values['vcpus'],
-            'memory': values['memory_mb'],
-            'disk': values['disk_gb'],
+            'cpus': resource_inventory['VCPU'],
+            'memory': resource_inventory['MEMORY_MB'],
+            'disk': resource_inventory['DISK_GB'],
             'resource_properties': values['resource_properties'],
+            'resource_inventory': resource_inventory,
             'start_date': values['start_date'],
             'end_date': values['end_date']
             }
@@ -270,6 +386,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         #  2. hosts with reservations followed by hosts without reservations
         # Note that the `candidate_id_list` has already been ordered
         # satisfying the second requirement.
+        LOG.debug(f"Old hosts: {candidate_id_list}")
+        LOG.debug(f"Found candidates: {candidate_id_list}")
         if affinity:
             host_id_map = collections.Counter(candidate_id_list)
             available = {k for k, v in host_id_map.items() if v >= req_amount}
@@ -317,7 +435,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         return {'added': added_host_ids, 'removed': removed_host_ids}
 
-    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id):
+    def _create_flavor(self, reservation_id, vcpus, memory, disk, group_id,
+                       source_flavor=None):
         flavor_details = {
             'flavorid': reservation_id,
             'name': RESERVATION_PREFIX + ":" + reservation_id,
@@ -333,9 +452,24 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation_rc = "resources:CUSTOM_RESERVATION_" + rsv_id_rc_format
         extra_specs = {
             FLAVOR_EXTRA_SPEC: reservation_id,
-            "affinity_id": group_id,
             reservation_rc: "1"
             }
+        if group_id:
+            extra_specs["affinity_id"] = group_id
+
+        # Copy across any extra specs from the source flavor
+        # while being sure not to overide the ones used above
+        if source_flavor:
+            source_flavor = json.loads(source_flavor)
+        if source_flavor:
+            extra_specs["blazar_copy_from_id"] = source_flavor["id"]
+            extra_specs["blazar_copy_from_name"] = source_flavor["name"]
+            source_extra_specs = source_flavor["extra_specs"]
+            for key, value in source_extra_specs.items():
+                if key not in extra_specs.keys():
+                    extra_specs[key] = value
+
+        LOG.debug(extra_specs)
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
@@ -344,30 +478,38 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation_id = inst_reservation['reservation_id']
 
         ctx = context.current()
-        user_client = nova.NovaClientWrapper()
+        #user_client = nova.NovaClientWrapper()
+        #reserved_group = user_client.nova.server_groups.create(
+        #    RESERVATION_PREFIX + ':' + reservation_id,
+        #    'affinity' if inst_reservation['affinity'] else 'anti-affinity'
+        #    )
+        # TODO this should be optional!!
+        reserved_group_id = None
 
-        reserved_group = user_client.nova.server_groups.create(
-            RESERVATION_PREFIX + ':' + reservation_id,
-            'affinity' if inst_reservation['affinity'] else 'anti-affinity'
-            )
+        # TODO(johngarbutt): traits and pci alias!?
+        resources = []
 
+        # TODO get PCPUs and more!
+        if not inst_reservation['vcpus']:
+            inst_reservation['vcpus'] = 1
         reserved_flavor = self._create_flavor(reservation_id,
                                               inst_reservation['vcpus'],
                                               inst_reservation['memory_mb'],
                                               inst_reservation['disk_gb'],
-                                              reserved_group.id)
+                                              reserved_group_id,
+                                              inst_reservation['source_flavor'])
 
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         pool_metadata = {
             RESERVATION_PREFIX: reservation_id,
             'filter_tenant_id': ctx.project_id,
-            'affinity_id': reserved_group.id
+            'affinity_id': reserved_group_id
             }
         agg = pool.create(name=reservation_id, metadata=pool_metadata)
 
         self.placement_client.create_reservation_class(reservation_id)
 
-        return reserved_flavor, reserved_group, agg
+        return reserved_flavor, reserved_group_id, agg
 
     def cleanup_resources(self, instance_reservation):
         def check_and_delete_resource(client, id):
@@ -381,7 +523,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         check_and_delete_resource(self.nova.nova.server_groups,
                                   instance_reservation['server_group_id'])
         check_and_delete_resource(self.nova.nova.flavors, reservation_id)
-        check_and_delete_resource(nova.ReservationPool(), reservation_id)
+        # TODO(johngarbutt): should we remove all aggregates in placement here?
+        check_and_delete_resource(nova.PlacementReservationPool(), reservation_id)
 
     def update_resources(self, reservation_id):
         """Updates reserved resources in Nova.
@@ -394,7 +537,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         reservation = db_api.reservation_get(reservation_id)
 
         if reservation['status'] == 'active':
-            pool = nova.ReservationPool()
+            pool = nova.PlacementReservationPool()
 
             # Dict of number of instances to reserve on a host keyed by the
             # host id
@@ -407,9 +550,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             for host_id, num in allocation_map.items():
                 host = db_api.host_get(host_id)
                 try:
-                    pool.add_computehost(
-                        reservation['aggregate_id'],
-                        host['service_name'], stay_in=True)
+                    pool.add_computehost(reservation["aggregate_id"], host)
                 except mgr_exceptions.AggregateAlreadyHasHost:
                     pass
                 except nova_exceptions.ClientException:
@@ -421,20 +562,34 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         else:
             try:
                 self.nova.nova.flavors.delete(reservation['id'])
+                # TODO(johngarbutt): get inventory?
+                resource_inventory = ""
+                resources = []
+                for req in resource_inventory.split(','):
+                    resource_class, amount = req.split(':')
+                    resources.append({'name': resource_class, 'value': amount})
+                # TODO(johngarbutt): traits and pci alias!?
                 self._create_flavor(reservation['id'],
                                     reservation['vcpus'],
                                     reservation['memory_mb'],
                                     reservation['disk_gb'],
-                                    reservation['server_group_id'])
+                                    reservation['server_group_id'],
+                                    reservation['source_flavor'])
             except nova_exceptions.ClientException:
                 LOG.exception("Failed to update Nova resources "
                               "for reservation %s", reservation['id'])
                 raise mgr_exceptions.NovaClientError()
 
     def _check_missing_reservation_params(self, values):
-        marshall_attributes = set(['vcpus', 'memory_mb', 'disk_gb',
-                                   'amount', 'affinity',
-                                   'resource_properties'])
+        marshall_attributes = set(['amount', 'affinity'])
+        # TODO(johngarbutt): do we want a config to require
+        # flavor_id and reject other requests, or an enforcer?
+        # if flavor_id is present, we ignore the components
+        # if flavor_id is not present, we require the components
+        if "flavor_id" not in values.keys():
+            marshall_attributes = marshall_attributes.union(
+                ['vcpus', 'memory_mb', 'disk_gb', 'resource_properties'])
+
         missing_attr = marshall_attributes - set(values.keys())
         if missing_attr:
             raise mgr_exceptions.MissingParameter(param=','.join(missing_attr))
@@ -453,12 +608,86 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                 raise mgr_exceptions.MalformedParameter(
                     param='affinity (must be a bool value or None)')
 
+    def _populate_values_with_flavor_info(self, values):
+        if "resource_inventory" in values.keys():
+            return
+
+        # Look up flavor to get the reservation details
+        flavor_id = values.get('flavor_id')
+
+        # TODO(johngarbutt) hack to get flavor in via horizon!!
+        if not flavor_id and values['resource_properties'] and "flavor" in values['resource_properties']:
+            from oslo_serialization import jsonutils
+            requirements = jsonutils.loads(values['resource_properties'])
+            flavor_id = requirements[1]
+            values['resource_properties'] = ""
+
+        resource_inventory = {}
+        resource_traits = {}
+        source_flavor = {}
+
+        if not flavor_id:
+            # create resource requests from legacy values, if present
+            resource_inventory["VCPU"] = values.get('vcpus', 0)
+            resource_inventory["MEMORY_MB"] = values.get('memory_mb', 0)
+            resource_inventory["DISK_GB"] = values.get('disk_gb', 0)
+
+        else:
+            user_client = nova.NovaClientWrapper()
+            flavor = user_client.nova.nova.flavors.get(flavor_id)
+            source_flavor = flavor.to_dict()
+            # TODO(johngarbutt): use newer api to get this above
+            source_flavor["extra_specs"] = flavor.get_keys()
+
+            # Populate the legacy instance reservation fields
+            # And override what the user specified, if anything
+            values['vcpus'] = int(source_flavor['vcpus'])
+            values['memory_mb'] = int(source_flavor['ram'])
+            values['disk_gb'] = (
+                int(source_flavor['disk']) +
+                int(source_flavor['OS-FLV-EXT-DATA:ephemeral']))
+
+            # add default resource requests
+            resource_inventory["VCPU"] = values['vcpus']
+            resource_inventory["MEMORY_MB"] = values['memory_mb']
+            resource_inventory["DISK_GB"] = values['disk_gb']
+
+            # Check for PCPUs
+            hw_cpu_policy = source_flavor['extra_specs'].get("hw:cpu_policy")
+            if hw_cpu_policy == "dedicated":
+                resource_inventory["PCPU"] = source_flavor['vcpus']
+                resource_inventory["VCPU"] = 0
+
+            # Check for traits and extra resources
+            for key, value in source_flavor['extra_specs'].items():
+                if key.startswith("trait:"):
+                    trait = key.split(":")[1]
+                    if value == "required":
+                        resource_traits[trait] = "required"
+                    elif value == "forbidden":
+                        resource_traits[trait] = "forbidden"
+
+                if key.startswith("resources:"):
+                    rc = key.split(":")[1]
+                    resource_inventory[rc] = int(value)
+
+        values["resource_inventory"] = json.dumps(resource_inventory)
+        values["resource_traits"] = json.dumps(resource_traits)
+        values["source_flavor"] = json.dumps(source_flavor)
+
+        LOG.debug(values)
+
     def reserve_resource(self, reservation_id, values):
         self._check_missing_reservation_params(values)
         self._validate_reservation_params(values)
 
+        # when user specifies a flavor,
+        # populate values from the flavor
+        self._populate_values_with_flavor_info(values)
+
         hosts = self.pickup_hosts(reservation_id, values)
 
+        # TODO(johngarbutt): need the flavor resource_inventory stuff here
         instance_reservation_val = {
             'reservation_id': reservation_id,
             'vcpus': values['vcpus'],
@@ -466,7 +695,10 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             'disk_gb': values['disk_gb'],
             'amount': values['amount'],
             'affinity': bool_from_string(values['affinity'], default=None),
-            'resource_properties': values['resource_properties']
+            'resource_properties': values['resource_properties'],
+            'resource_inventory': values['resource_inventory'],
+            'resource_traits': values['resource_traits'],
+            'source_flavor': values['source_flavor'],
             }
         instance_reservation = db_api.instance_reservation_create(
             instance_reservation_val)
@@ -476,7 +708,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                                           'reservation_id': reservation_id})
 
         try:
-            flavor, group, pool = self._create_resources(instance_reservation)
+            flavor, group_id, pool = self._create_resources(instance_reservation)
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)
@@ -485,7 +717,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         db_api.instance_reservation_update(instance_reservation['id'],
                                            {'flavor_id': flavor.id,
-                                            'server_group_id': group.id,
+                                            'server_group_id': group_id,
                                             'aggregate_id': pool.id})
 
         return instance_reservation['id']
@@ -585,7 +817,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
                       'project_id': ctx.project_id})
             raise mgr_exceptions.EventError()
 
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
 
         # Dict of number of instances to reserve on a host keyed by the
         # host id
@@ -597,8 +829,7 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         for host_id, num in allocation_map.items():
             host = db_api.host_get(host_id)
-            pool.add_computehost(instance_reservation['aggregate_id'],
-                                 host['service_name'], stay_in=True)
+            pool.add_computehost(instance_reservation["aggregate_id"], host)
             self.placement_client.update_reservation_inventory(
                 host['hypervisor_hostname'], reservation_id, num)
 
@@ -618,6 +849,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
             reservation_id=reservation_id)
         for allocation in allocations:
             host = db_api.host_get(allocation['compute_host_id'])
+            pool = nova.PlacementReservationPool()
+            pool.remove_computehost(instance_reservation["aggregate_id"], host)
             db_api.host_allocation_destroy(allocation['id'])
             hostnames.append(host['hypervisor_hostname'])
 
@@ -772,12 +1005,11 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def _pre_reallocate(self, reservation, host_id):
         """Delete the reservation inventory/aggregates for the host."""
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         # Remove the failed host from the aggregate.
         if reservation['status'] == status.reservation.ACTIVE:
             host = db_api.host_get(host_id)
-            pool.remove_computehost(reservation['aggregate_id'],
-                                    host['service_name'])
+            pool.remove_computehost(reservation["aggregate_id"], host)
             try:
                 self.placement_client.delete_reservation_inventory(
                     host['hypervisor_hostname'], reservation['id'])
@@ -786,13 +1018,11 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
     def _post_reallocate(self, reservation, lease, host_id, num):
         """Add the reservation inventory/aggregates for the host."""
-        pool = nova.ReservationPool()
+        pool = nova.PlacementReservationPool()
         if reservation['status'] == status.reservation.ACTIVE:
             # Add the alternative host into the aggregate.
             new_host = db_api.host_get(host_id)
-            pool.add_computehost(reservation['aggregate_id'],
-                                 new_host['service_name'],
-                                 stay_in=True)
+            pool.add_computehost(reservation["aggregate_id"], new_host)
             # Here we use "additional=True" not to break the existing
             # inventory(allocations) on the new host
             self.placement_client.update_reservation_inventory(

@@ -26,6 +26,7 @@ from blazar import context
 from blazar.manager import exceptions as manager_exceptions
 from blazar.plugins import oshosts
 from blazar.utils.openstack import base
+from blazar.utils.openstack import placement
 
 
 nova_opts = [
@@ -357,9 +358,11 @@ class ReservationPool(NovaClientWrapper):
         added_hosts = []
         removed_hosts = []
         agg = self.get_aggregate_from_name_or_id(pool)
+        # TODO get node list from placement?
 
         try:
             freepool_agg = self.get(self.freepool_name)
+            # TODO get node list from placement?
         except manager_exceptions.AggregateNotFound:
             raise manager_exceptions.NoFreePool()
 
@@ -385,12 +388,13 @@ class ReservationPool(NovaClientWrapper):
                     #
                     # NOTE(priteau): Preemptibles should not be used with
                     # instance reservation yet.
-                    self.terminate_preemptibles(host)
+                    # TODO!! self.terminate_preemptibles(host)
 
                 LOG.info("adding host '%(host)s' to aggregate %(id)s",
                          {'host': host, 'id': agg.id})
                 try:
                     self.nova.aggregates.add_host(agg.id, host)
+                    # TODO: do placement instead
                     added_hosts.append(host)
                 except nova_exception.NotFound:
                     raise manager_exceptions.HostNotFound(host=host)
@@ -566,3 +570,58 @@ class NovaInventory(NovaClientWrapper):
                 #  a list of hosts without 'servers' attribute if no servers
                 #  are running on that host
                 return None
+
+
+class PlacementReservationPool(object):
+    def __init__(self):
+        self.old_pool = ReservationPool()
+        # used to manage placement aggregates
+        self.placement_client = placement.BlazarPlacementClient()
+
+    @property
+    def nova(self):
+        # 2.41 is the first microversion where we get the aggregate uuid
+        # and it was available in Ocata
+        nova = BlazarNovaClient(
+            version="2.41",
+            username=CONF.os_admin_username,
+            password=CONF.os_admin_password,
+            user_domain_name=CONF.os_admin_user_domain_name,
+            project_name=CONF.os_admin_project_name,
+            project_domain_name=CONF.os_admin_project_domain_name)
+        return nova
+
+    def get_aggregate_id_from_name(self, name):
+        all_aggregates =  self.nova.aggregates.list()
+        # TODO(johngarbutt): this is horrible, but the only API way
+        for agg in all_aggregates:
+            if name == agg.name:
+                return agg.id
+        raise manager_exceptions.AggregateNotFound(pool=name)
+
+    def create(self, name=None, az=None, metadata=None):
+        return self.old_pool.create(name, az, metadata)
+
+    def delete(self, nova_aggregate_id):
+        # TODO: remove all hosts in placement? its expensive!
+        return self.old_pool.delete(nova_aggregate_id, force=True)
+
+    def add_computehost(self, nova_aggregate_id, computehost):
+        rp = self.placement_client.get_resource_provider(
+            computehost["hypervisor_hostname"])
+
+        nova_agg = self.nova.aggregates.get(nova_aggregate_id)
+        aggregate_uuid = nova_agg.uuid
+
+        self.placement_client.add_rp_to_aggregate(
+            aggregate_uuid, rp["uuid"])
+
+    def remove_computehost(self, nova_aggregate_id, computehost):
+        rp = self.placement_client.get_resource_provider(
+            computehost["hypervisor_hostname"])
+
+        nova_agg =  self.nova.aggregates.get(nova_aggregate_id)
+        aggregate_uuid = nova_agg.uuid
+
+        self.placement_client.remove_rp_from_aggregate(
+            aggregate_uuid, rp["uuid"])

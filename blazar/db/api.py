@@ -378,6 +378,28 @@ def host_update(host_id, values):
     IMPL.host_update(host_id, values)
 
 
+# ComputeHostResourceInventory
+
+def host_custom_resource_create(values):
+    """Create a Host CustomResource from the values."""
+    return IMPL.host_custom_resource_create(values)
+
+
+def host_custom_resource_get_all_per_host(host_id):
+    """Return all custom resources belonging to a specific Compute host."""
+    return IMPL.host_custom_resource_get_all_per_host(host_id)
+
+
+# ComputeHostTrait
+
+def host_trait_create(values):
+    return IMPL.host_trait_create(values)
+
+
+def host_trait_get_all_per_host(host_id):
+    return IMPL.host_trait_get_all_per_host(host_id)
+
+
 # ComputeHostExtraCapabilities
 
 def host_extra_capability_create(values):

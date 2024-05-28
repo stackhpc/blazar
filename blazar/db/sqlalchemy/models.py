@@ -206,6 +206,9 @@ class InstanceReservations(mb.BlazarBase):
     amount = sa.Column(sa.Integer, nullable=False)
     affinity = sa.Column(sa.Boolean, nullable=True)
     resource_properties = sa.Column(MediumText(), nullable=True)
+    resource_inventory = sa.Column(MediumText(), nullable=True)
+    resource_traits = sa.Column(MediumText(), nullable=True)
+    source_flavor = sa.Column(MediumText(), nullable=True)
     flavor_id = sa.Column(sa.String(36), nullable=True)
     aggregate_id = sa.Column(sa.Integer, nullable=True)
     server_group_id = sa.Column(sa.String(36), nullable=True)
@@ -253,9 +256,42 @@ class ComputeHost(mb.BlazarBase):
                                                   cascade="all,delete",
                                                   backref='computehost',
                                                   lazy='joined')
+    computehost_resource_inventory = relationship(
+        'ComputeHostResourceInventory', cascade="all,delete",
+        backref='computehost', lazy='joined')
+    computehost_traits = relationship(
+        'ComputeHostTrait', cascade="all,delete",
+        backref='computehost', lazy='joined')
 
     def to_dict(self):
         return super(ComputeHost, self).to_dict()
+
+
+class ComputeHostResourceInventory(mb.BlazarBase):
+    __tablename__ = 'computehost_resource_inventory'
+
+    id = _id_column()
+    computehost_id = sa.Column(sa.String(36), sa.ForeignKey('computehosts.id'))
+    resource_class = sa.Column(sa.String(255), nullable=False)
+    allocation_ratio = sa.Column(sa.Float, nullable=False)
+    total = sa.Column(sa.Integer, nullable=False)
+    reserved = sa.Column(sa.Integer, nullable=False)
+    max_unit = sa.Column(sa.Integer, nullable=False)
+    min_unit = sa.Column(sa.Integer, nullable=False)
+
+    def to_dict(self):
+        return super(ComputeHostResourceInventory, self).to_dict()
+
+
+class ComputeHostTrait(mb.BlazarBase):
+    __tablename__ = 'computehost_trait'
+
+    id = _id_column()
+    computehost_id = sa.Column(sa.String(36), sa.ForeignKey('computehosts.id'))
+    trait = sa.Column(sa.String(255), nullable=False)
+
+    def to_dict(self):
+        return super(ComputeHostTrait, self).to_dict()
 
 
 class ComputeHostExtraCapability(mb.BlazarBase):
