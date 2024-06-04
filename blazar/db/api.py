@@ -418,6 +418,24 @@ def host_get_all_by_queries_including_extracapabilities(queries):
     return IMPL.host_get_all_by_queries_including_extracapabilities(queries)
 
 
+# ComputeHostResourceInventory
+
+def host_resource_inventory_create(values):
+    """Create a Host CustomResource from the values."""
+    return IMPL.host_resource_inventory_create(values)
+
+
+def host_resource_inventory_get_all_per_host(host_id):
+    """Return all custom resources belonging to a specific Compute host."""
+    return IMPL.host_resource_inventory_get_all_per_host(host_id)
+
+
+# ComputeHostTrait
+
+def host_trait_create(values):
+    return IMPL.host_trait_create(values)
+
+
 # FloatingIP reservation
 
 def fip_reservation_create(fip_reservation_values):

@@ -20,7 +20,6 @@ from oslo_utils import uuidutils
 
 from blazar.db import exceptions as db_exceptions
 from blazar.db.sqlalchemy import api as db_api
-from blazar.db.sqlalchemy import models
 from blazar.plugins import oshosts as host_plugin
 from blazar import tests
 
@@ -209,11 +208,6 @@ class SQLAlchemyDBApiTestCase(tests.DBTestCase):
 
     def setUp(self):
         super(SQLAlchemyDBApiTestCase, self).setUp()
-
-    def test_model_query(self):
-        lease = db_api.lease_create(_get_fake_phys_lease_values())
-        query = db_api.model_query(models.Lease)
-        self.assertEqual([lease.to_dict()], [l.to_dict() for l in query.all()])
 
     def test_create_phys_lease(self):
         """Check physical lease create
@@ -652,6 +646,73 @@ class SQLAlchemyDBApiTestCase(tests.DBTestCase):
         self.assertEqual([],
                          db_api.host_extra_capability_get_all_per_name('1',
                                                                        'bad'))
+
+    # Resource Inventory
+
+    def test_host_resource_inventory_create(self):
+        db_api.host_create(_get_fake_host_values(id=1))
+        fake_inventory_values = {
+            'id': _get_fake_random_uuid(),
+            'computehost_id': '1',
+            'resource_class': 'VCPU',
+            'allocation_ratio': 1.0,
+            'total': 10,
+            'reserved': 2,
+            'min_unit': 1,
+            'max_unit': 1
+        }
+
+        db_api.host_resource_inventory_create(fake_inventory_values)
+
+        host = db_api.host_get(1)
+        actual = host.computehost_resource_inventories[0].to_dict()
+        self.assertIsNotNone(actual["created_at"])
+        del actual["created_at"]
+        expected = fake_inventory_values.copy()
+        expected["updated_at"] = None
+        self.assertDictEqual(expected, actual)
+
+    def test_host_resource_inventory_get_all_per_host(self):
+        db_api.host_create(_get_fake_host_values(id=1))
+        fake_inventory_values = {
+            'id': _get_fake_random_uuid(),
+            'computehost_id': '1',
+            'resource_class': 'VCPU',
+            'allocation_ratio': 1.0,
+            'total': 10,
+            'reserved': 2,
+            'min_unit': 1,
+            'max_unit': 1
+        }
+        db_api.host_resource_inventory_create(fake_inventory_values)
+
+        result = db_api.host_resource_inventory_get_all_per_host("1")
+
+        result = list(result)
+        self.assertEqual(1, len(result))
+        first_result = result[0].to_dict()
+        expected = fake_inventory_values.copy()
+        expected["updated_at"] = None
+        expected["created_at"] = first_result["created_at"]
+        self.assertDictEqual(expected, first_result)
+
+    def test_host_traits_create(self):
+        db_api.host_create(_get_fake_host_values(id=1))
+        fake_trait_values = {
+            'id': _get_fake_random_uuid(),
+            'computehost_id': '1',
+            'trait': 'HW_CPU_X86_AVX'
+        }
+
+        db_api.host_trait_create(fake_trait_values)
+
+        host = db_api.host_get(1)
+        actual = host.computehost_traits[0].to_dict()
+        self.assertIsNotNone(actual["created_at"])
+        del actual["created_at"]
+        expected = fake_trait_values.copy()
+        expected["updated_at"] = None
+        self.assertDictEqual(expected, actual)
 
     # Instance reservation
 

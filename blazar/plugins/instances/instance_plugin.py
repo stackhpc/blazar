@@ -378,8 +378,10 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
 
         reservation_id = instance_reservation['reservation_id']
 
-        check_and_delete_resource(self.nova.nova.server_groups,
-                                  instance_reservation['server_group_id'])
+        server_group_id = instance_reservation['server_group_id']
+        if server_group_id:
+            check_and_delete_resource(self.nova.nova.server_groups,
+                                      server_group_id)
         check_and_delete_resource(self.nova.nova.flavors, reservation_id)
         check_and_delete_resource(nova.ReservationPool(), reservation_id)
 
@@ -575,6 +577,8 @@ class VirtualInstancePlugin(base.BasePlugin, nova.NovaClientWrapper):
         instance_reservation = db_api.instance_reservation_get(resource_id)
         reservation_id = instance_reservation['reservation_id']
 
+        # TODO(johngarbutt): create flavor after updating placement?
+        # else we will race with automation looking for the flavor here
         try:
             self.nova.flavor_access.add_tenant_access(reservation_id,
                                                       ctx.project_id)
