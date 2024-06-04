@@ -31,5 +31,5 @@ RPC_API_VERSION = '1.0'
 def get_target():
     return messaging.Target(topic=CONF.manager.rpc_topic,
                             version=RPC_API_VERSION,
-                            server=CONF.host,
+                            # TODO server=CONF.host,
                             namespace='manager.api')
