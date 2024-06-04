@@ -370,7 +370,7 @@ class FlavorPlugin(base.BasePlugin):
         # then inventory as reserved to start with?
         self._placement_client.create_reservation_class(reservation_id)
 
-        return reserved_flavor["id"], agg["id"]
+        return reserved_flavor.id, agg.id
 
     def _create_flavor(self, instance_reservation):
         source_flavor = self._get_cached_flavor(instance_reservation)
