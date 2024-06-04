@@ -362,7 +362,7 @@ class FlavorPlugin(base.BasePlugin):
             # [scheduler]enable_isolated_aggregate_filtering=True
             # such that only flavors that request this trait can be
             # used within this aggregate
-            'trait:CUSTOM_BLAZAR_RESERVATION': 'required',
+            # TODO 'trait:CUSTOM_BLAZAR_RESERVATION': 'required',
         }
         agg = pool.create(name=reservation_id, metadata=pool_metadata)
 
@@ -397,7 +397,7 @@ class FlavorPlugin(base.BasePlugin):
         extra_specs[instance_plugin.FLAVOR_EXTRA_SPEC] = reservation_id
         extra_specs[reservation_rc] = "1"
         # NOTE(johngarbutt): added to work with isolated aggregate filtering
-        extra_specs["trait:CUSTOM_BLAZAR_RESERVATION"] = "required"
+        # TODO extra_specs["trait:CUSTOM_BLAZAR_RESERVATION"] = "required"
         reserved_flavor.set_keys(extra_specs)
 
         return reserved_flavor
