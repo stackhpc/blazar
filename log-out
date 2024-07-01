@@ -1,0 +1,21 @@
+[2024-07-08 16:51:48,985] DEBUG    stestr initialize_app
+[2024-07-08 16:51:48,985] DEBUG    stestr prepare_to_run_command Run
+[2024-07-08 16:51:50,776] DEBUG    stestr clean_up Run
+[2024-07-08 16:52:35,606] DEBUG    stestr initialize_app
+[2024-07-08 16:52:35,606] DEBUG    stestr prepare_to_run_command Run
+[2024-07-08 16:52:37,399] DEBUG    stestr clean_up Run
+[2024-07-09 10:09:45,813] DEBUG    stestr initialize_app
+[2024-07-09 10:09:45,813] DEBUG    stestr prepare_to_run_command Run
+[2024-07-09 10:09:47,703] DEBUG    stestr clean_up Run
+[2024-07-09 10:26:58,622] DEBUG    stestr initialize_app
+[2024-07-09 10:26:58,623] DEBUG    stestr prepare_to_run_command Run
+[2024-07-09 10:27:00,494] DEBUG    stestr clean_up Run
+[2024-07-09 10:29:56,444] DEBUG    stestr initialize_app
+[2024-07-09 10:29:56,444] DEBUG    stestr prepare_to_run_command Run
+[2024-07-09 10:29:58,473] DEBUG    stestr clean_up Run
+[2024-07-09 10:33:14,724] DEBUG    stestr initialize_app
+[2024-07-09 10:33:14,724] DEBUG    stestr prepare_to_run_command Run
+[2024-07-09 10:33:16,615] DEBUG    stestr clean_up Run
+[2024-07-09 10:34:01,187] DEBUG    stestr initialize_app
+[2024-07-09 10:34:01,188] DEBUG    stestr prepare_to_run_command Run
+[2024-07-09 10:34:03,228] DEBUG    stestr clean_up Run
