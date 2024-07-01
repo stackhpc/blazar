@@ -162,8 +162,9 @@ class ExternalServiceFilter(base_filter.BaseFilter):
 
     def check_create(self, context, lease_values):
         if self.check_create_endpoint:
-            self._post(self.check_create_endpoint, dict(
-                context=context, lease=lease_values))
+            request = dict(context=context, lease=lease_values)
+            LOG.debug(f"external service request: {request}")
+            self._post(self.check_create_endpoint, request)
 
     def check_update(self, context, current_lease_values, new_lease_values):
         if self.check_update_endpoint:
