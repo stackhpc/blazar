@@ -316,6 +316,7 @@ class FlavorPlugin(base.BasePlugin):
             'affinity': None,
             'resource_properties': json.dumps(source_flavor)
         }
+        LOG.debug(f"instance_reservation_val {instance_reservation_val}")
         instance_reservation = db_api.instance_reservation_create(
             instance_reservation_val)
 
@@ -418,8 +419,9 @@ class FlavorPlugin(base.BasePlugin):
         self._instance_plugin.on_end(resource_id)
 
     def get_enforcement_resources(self, reservation_values):
-        source_flavor = self._get_cached_flavor(reservation_values)
-        if not source_flavor:
+        try:
+            source_flavor = self._get_cached_flavor(reservation_values)
+        except KeyError:
             source_flavor = self._get_flavor_details(reservation_values)
         return self._get_total_resource_request(
             reservation_values, source_flavor)

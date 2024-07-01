@@ -349,3 +349,75 @@ class TestFlavorPlugin(tests.DBTestCase):
         mock_create.assert_called_once_with(
             flavorid='12345', name='reservation:12345', vcpus=2, ram=1024,
             disk=10, is_public=False)
+
+    @mock.patch.object(flavor_plugin.FlavorPlugin, 'get_enforcement_resources')
+    @mock.patch.object(flavors.FlavorManager, 'create')
+    def test_get_enforcement_resources(self, mock_create_flavor,
+                                       mock_get_resources):
+        plugin = flavor_plugin.FlavorPlugin()
+        fake_flavor = {
+            "disk": 10,  # GiB
+            "OS-FLV-EXT-DATA:ephemeral": 100,  # GiB
+            "id": "34eb7166-0e9b-432c-96fd-dff37f22e36e",
+            "name": "test1",
+            "ram": 1024,  # MB
+            "swap": 0,
+            "vcpus": 2,
+            "extra_specs": {}
+        }
+        fake_reservation = {
+            'reservation_id': "12345",
+            'vcpus': fake_flavor["vcpus"],
+            'memory_mb': fake_flavor["ram"],
+            'disk_gb': fake_flavor["disk"],
+            'amount': 2,
+            'affinity': None,
+            'resource_properties': json.dumps(fake_flavor)
+        }
+        expected_resources = {
+            'DISK_GB': 220,
+            'MEMORY_MB': 2048,
+            'VCPU': 4
+        }
+        mock_get_resources.return_value = expected_resources
+        mock_flavor = mock.Mock()
+        mock_create_flavor.return_value = mock_flavor
+
+        rsv = plugin.get_enforcement_resources(fake_reservation)
+
+        self.assertEqual(rsv, expected_resources)
+
+    @mock.patch.object(flavor_plugin.FlavorPlugin, '_get_flavor_details')
+    def test_get_enforcement_resources_uncached(self, mock_get_flavor):
+        plugin = flavor_plugin.FlavorPlugin()
+
+        fake_reservation = {
+            'reservation_id': "12345",
+            'vcpus': 2,
+            'memory_mb': 2048,
+            'disk_gb': 10,
+            'amount': 4,
+            'affinity': None,
+            'resource_properties': None,
+            'flavor_id': 'fake_flavor_id',
+        }
+        expected_resources = {
+            'DISK_GB': 40,
+            'MEMORY_MB': 8192,
+            'VCPU': 8
+        }
+        fake_flavor = {
+            "disk": 5,  # GiB
+            "OS-FLV-EXT-DATA:ephemeral": 5,  # GiB
+            "id": "34eb7166-0e9b-432c-96fd-dff37f22e36e",
+            "name": "test1",
+            "ram": 2048,  # MB
+            "swap": 0,
+            "vcpus": 2,
+            "extra_specs": {},
+        }
+        mock_get_flavor.return_value = fake_flavor
+
+        rsv = plugin.get_enforcement_resources(fake_reservation)
+
+        self.assertEqual(rsv, expected_resources)
