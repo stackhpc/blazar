@@ -330,7 +330,7 @@ class FlavorPlugin(base.BasePlugin):
         except nova_exceptions.ClientException:
             LOG.exception("Failed to create Nova resources "
                           "for reservation %s", reservation_id)
-            self._cleanup_resources(instance_reservation)
+            self.cleanup_resources(instance_reservation)
             raise mgr_exceptions.NovaClientError()
 
         db_api.instance_reservation_update(instance_reservation['id'],
@@ -402,7 +402,7 @@ class FlavorPlugin(base.BasePlugin):
 
         return reserved_flavor
 
-    def _cleanup_resources(self, instance_reservation):
+    def cleanup_resources(self, instance_reservation):
         self._instance_plugin.cleanup_resources(instance_reservation)
 
     def update_reservation(self, reservation_id, values):

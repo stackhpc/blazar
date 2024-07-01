@@ -107,6 +107,10 @@ class BasePlugin(object, metaclass=abc.ABCMeta):
         """Wake up resource."""
         pass
 
+    def cleanup_resources(self, reservation_values):
+        """Cleanup resources."""
+        pass
+
     def list_resource_properties(self, query):
         detail = False if not query else query.get('detail', False)
         all_properties = False if not query else query.get('all', False)

@@ -57,6 +57,10 @@ class ExternalServiceFilter(base_filter.BaseFilter):
             default=None,
             help='Overrides check-create endpoint with another URL.'),
         cfg.StrOpt(
+            'external_service_commit_create_endpoint',
+            default=None,
+            help='Overrides commit-create endpoint with another URL.'),
+        cfg.StrOpt(
             'external_service_check_update_endpoint',
             default=None,
             help='Overrides check-update endpoint with another URL.'),
@@ -83,6 +87,9 @@ class ExternalServiceFilter(base_filter.BaseFilter):
         self.check_create_endpoint = self._construct_url(
             "check-create",
             conf.enforcement.external_service_check_create_endpoint)
+        self.commit_create_endpoint = self._construct_url(
+            "commit-create",
+            conf.enforcement.external_service_commit_create_endpoint)
         self.check_update_endpoint = self._construct_url(
             "check-update",
             conf.enforcement.external_service_check_update_endpoint)
@@ -92,6 +99,7 @@ class ExternalServiceFilter(base_filter.BaseFilter):
 
         endpoints = (
             self.check_create_endpoint,
+            self.commit_create_endpoint,
             self.check_update_endpoint,
             self.on_end_endpoint,
         )
@@ -165,6 +173,11 @@ class ExternalServiceFilter(base_filter.BaseFilter):
             request = dict(context=context, lease=lease_values)
             LOG.debug(f"external service request: {request}")
             self._post(self.check_create_endpoint, request)
+
+    def commit_create(self, context, lease_values):
+        if self.commit_create_endpoint:
+            self._post(self.commit_create_endpoint, dict(
+                context=context, lease=lease_values))
 
     def check_update(self, context, current_lease_values, new_lease_values):
         if self.check_update_endpoint:

@@ -441,6 +441,7 @@ class ManagerService(service_utils.RPCServer):
                         LOG.exception("Failed to create reservation for a "
                                       "lease. Rollback the lease and "
                                       "associated reservations")
+                        self._cleanup_all_resources(reservations)
                         db_api.lease_destroy(lease_id)
 
                 try:
@@ -453,15 +454,36 @@ class ManagerService(service_utils.RPCServer):
                         LOG.exception("Failed to create event for a lease. "
                                       "Rollback the lease and associated "
                                       "reservations")
+                        self._cleanup_all_resources(reservations)
                         db_api.lease_destroy(lease_id)
 
                 else:
+                    # commit any enforcement state now the lease is created
+                    # and rollback if this final check fails e.g. if there
+                    # was a race creating this one
+                    try:
+                        resource_requests = self._get_enforcement_resources(
+                            lease_values, reservations)
+                        self.enforcement.commit_create(
+                            context.current(), lease_id, lease_values,
+                            reservations, allocations, resource_requests)
+                    except common_ex.NotAuthorized as e:
+                        LOG.error("Enforcement checks failed. %s", str(e))
+                        self._cleanup_all_resources(reservations)
+                        db_api.lease_destroy(lease_id)
+                        raise common_ex.NotAuthorized(e)
+
                     db_api.lease_update(
                         lease_id,
                         {'status': status.lease.PENDING})
                     lease = db_api.lease_get(lease_id)
                     self._send_notification(lease, ctx, events=['create'])
                     return lease
+
+    def _cleanup_all_resources(self, reservations):
+        for reservation in reservations:
+            self.plugins[reservation['resource_type']].cleanup_resources(
+                reservation)
 
     def _add_resource_type(self, reservations, existing_reservations):
         rsvns_by_id = {}
