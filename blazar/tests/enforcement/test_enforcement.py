@@ -146,13 +146,16 @@ class EnforcementTestCase(tests.TestCase):
     def tearDown(self):
         super(EnforcementTestCase, self).tearDown()
 
-    def get_formatted_lease(self, lease_values, rsv, allocs):
+    def get_formatted_lease(self, lease_values, rsv, allocs,
+                            resource_requests=None):
         expected_lease = lease_values.copy()
 
         if rsv:
             expected_lease['reservations'] = rsv
         for res in expected_lease['reservations']:
             res['allocations'] = allocs[res['resource_type']]
+        if resource_requests:
+            expected_lease['resource_requests'] = resource_requests
 
         return expected_lease
 
@@ -177,11 +180,13 @@ class EnforcementTestCase(tests.TestCase):
 
     def test_format_lease(self):
         lease_values, rsv, allocs = get_lease_rsv_allocs()
+        resource_requests = {"VCPUS": 4, "MEMORY_MB": 8192, "DISK_GB": 10}
 
-        formatted_lease = self.enforcement.format_lease(lease_values, rsv,
-                                                        allocs)
+        formatted_lease = self.enforcement.format_lease(
+            lease_values, rsv, allocs, resource_requests)
 
-        expected_lease = self.get_formatted_lease(lease_values, rsv, allocs)
+        expected_lease = self.get_formatted_lease(lease_values, rsv, allocs,
+                                                  resource_requests)
 
         self.assertDictEqual(expected_lease, formatted_lease)
 

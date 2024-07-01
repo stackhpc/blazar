@@ -59,7 +59,8 @@ class UsageEnforcement:
                     project_id=lease_values['project_id'],
                     auth_url=auth_url, region_name=region_name)
 
-    def format_lease(self, lease_values, reservations, allocations):
+    def format_lease(self, lease_values, reservations, allocations,
+                     resource_requests=None):
         lease = lease_values.copy()
         lease['reservations'] = []
 
@@ -69,11 +70,16 @@ class UsageEnforcement:
             res['allocations'] = allocations[resource_type]
             lease['reservations'].append(res)
 
+        if resource_requests:
+            lease['resource_requests'] = resource_requests
+
         return lease
 
-    def check_create(self, context, lease_values, reservations, allocations):
+    def check_create(self, context, lease_values, reservations, allocations,
+                     resource_requests=None):
         context = self.format_context(context, lease_values)
-        lease = self.format_lease(lease_values, reservations, allocations)
+        lease = self.format_lease(
+            lease_values, reservations, allocations, resource_requests)
 
         for _filter in self.enabled_filters:
             _filter.check_create(context, lease)
