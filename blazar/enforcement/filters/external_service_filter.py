@@ -132,7 +132,7 @@ class ExternalServiceFilter(base_filter.BaseFilter):
         if self.x_auth_token:
             headers['X-Auth-Token'] = self.x_auth_token
         if self.bearer_token:
-            headers['Authorization: Bearer'] = self.bearer_token
+            headers['Authorization'] = "Bearer "+self.bearer_token
         return headers
 
     def _post(self, url, body):
