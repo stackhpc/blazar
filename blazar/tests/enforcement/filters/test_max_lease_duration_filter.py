@@ -247,4 +247,4 @@ class MaxLeaseDurationTestCase(tests.TestCase):
         lease = get_fake_lease()
         ctx = context.current()
 
-        self.enforcement.on_end(ctx, lease, allocations)
+        self.enforcement.on_end(ctx, lease["id"], lease, allocations)

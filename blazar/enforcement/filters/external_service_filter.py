@@ -58,12 +58,16 @@ class ExternalServiceFilter(base_filter.BaseFilter):
             help='Overrides check-create endpoint with another URL.'),
         cfg.StrOpt(
             'external_service_commit_create_endpoint',
-            defasult=None,
+            default=None,
             help='Overrides commit-create endpoint with another URL.'),
         cfg.StrOpt(
             'external_service_check_update_endpoint',
             default=None,
             help='Overrides check-update endpoint with another URL.'),
+        cfg.StrOpt(
+            'external_service_commit_update_endpoint',
+            default=None,
+            help='Overrides commit-update endpoint with another URL.'),
         cfg.StrOpt(
             'external_service_on_end_endpoint',
             default=None,
@@ -89,6 +93,9 @@ class ExternalServiceFilter(base_filter.BaseFilter):
         self.check_update_endpoint = self._construct_url(
             "check-update",
             conf.enforcement.external_service_check_update_endpoint)
+        self.commit_update_endpoint = self._construct_url(
+            "commit-update",
+            conf.enforcement.external_service_commit_update_endpoint)
         self.on_end_endpoint = self._construct_url(
             "on-end",
             conf.enforcement.external_service_on_end_endpoint)
@@ -97,6 +104,7 @@ class ExternalServiceFilter(base_filter.BaseFilter):
             self.check_create_endpoint,
             self.commit_create_endpoint,
             self.check_update_endpoint,
+            self.commit_update_endpoint,
             self.on_end_endpoint,
         )
 
@@ -176,6 +184,12 @@ class ExternalServiceFilter(base_filter.BaseFilter):
     def check_update(self, context, current_lease_values, new_lease_values):
         if self.check_update_endpoint:
             self._post(self.check_update_endpoint, dict(
+                context=context, current_lease=current_lease_values,
+                lease=new_lease_values))
+
+    def commit_update(self, context, current_lease_values, new_lease_values):
+        if self.commit_update_endpoint:
+            self.post(self.commit_update_endpoint, dict(
                 context=context, current_lease=current_lease_values,
                 lease=new_lease_values))
 

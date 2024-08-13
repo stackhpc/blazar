@@ -293,7 +293,7 @@ class EnforcementTestCase(tests.TestCase):
 
         on_end = self.patch(self.enforcement.enabled_filters[0], 'on_end')
 
-        self.enforcement.on_end(ctx, lease, allocations)
+        self.enforcement.on_end(ctx, lease["id"], lease, allocations)
 
         formatted_context = self.enforcement.format_context(ctx, lease)
         formatted_lease = self.enforcement.format_lease(
