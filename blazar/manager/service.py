@@ -587,11 +587,17 @@ class ManagerService(service_utils.RPCServer):
                 new_allocs = existing_allocs
 
             try:
-                # TODO(johngarbutt) eventually add resource_requests here too
-                self.enforcement.check_update(context.current(), lease, values,
-                                              existing_allocs, new_allocs,
+                current_resource_requests = self._get_enforcement_resources(
+                    values, existing_reservations)
+                new_resource_requests = self._get_enforcement_resources(
+                    values, new_reservations)
+                self.enforcement.check_update(context.current(), lease,
+                                              values, existing_allocs,
+                                              new_allocs,
                                               existing_reservations,
-                                              new_reservations)
+                                              new_reservations,
+                                              current_resource_requests,
+                                              new_resource_requests)
             except common_ex.NotAuthorized as e:
                 LOG.error("Enforcement checks failed. %s", str(e))
                 raise e
@@ -644,6 +650,23 @@ class ManagerService(service_utils.RPCServer):
         notifications = ['update']
         self._update_before_end_event(lease, values, notifications,
                                       before_end_date)
+
+        try:
+            current_resource_requests = self._get_enforcement_resources(
+                values, existing_reservations)
+            new_resource_requests = self._get_enforcement_resources(
+                values, new_reservations)
+            self.enforcement.commit_update(context.current(), lease_id,
+                                           lease, values, existing_allocs,
+                                           new_allocs, existing_reservations,
+                                           new_reservations,
+                                           current_resource_requests,
+                                           new_resource_requests)
+        except common_ex.NotAuthorized as e:
+            LOG.error("Enforcement checks failed. %s", str(e))
+            self._cleanup_all_resources(reservations)
+            db_api.lease_destroy(lease_id)
+            raise common_ex.NotAuthorized(e)
 
         try:
             del values['reservations']
@@ -708,7 +731,7 @@ class ManagerService(service_utils.RPCServer):
                 # lease is no longer in play.
                 allocations = self._existing_allocations(reservations)
                 try:
-                    self.enforcement.on_end(ctx, lease, allocations)
+                    self.enforcement.on_end(ctx, lease_id, lease, allocations)
                 except Exception as e:
                     LOG.error(e)
 
