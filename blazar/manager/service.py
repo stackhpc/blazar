@@ -731,7 +731,10 @@ class ManagerService(service_utils.RPCServer):
                 # lease is no longer in play.
                 allocations = self._existing_allocations(reservations)
                 try:
-                    self.enforcement.on_end(ctx, lease_id, lease, allocations)
+                    resource_requests = self._get_enforcement_resources(
+                            lease, reservations)
+                    self.enforcement.on_end(ctx, lease_id, lease, allocations,
+                                            resource_requests)
                 except Exception as e:
                     LOG.error(e)
 
