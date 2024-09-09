@@ -128,7 +128,7 @@ class UsageEnforcement:
         for _filter in self.enabled_filters:
             _filter.commit_update(context, current_lease, new_lease)
 
-    def on_end(self, context, lease_id, lease, allocations, resource_requests):
+    def on_end(self, context, lease_id, lease, allocations, resource_requests=None):
         context = self.format_context(context, lease)
         lease_values = self.format_lease(lease, lease['reservations'],
                                          allocations, resource_requests, lease_id)

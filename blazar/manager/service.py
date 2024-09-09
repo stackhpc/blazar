@@ -719,7 +719,6 @@ class ManagerService(service_utils.RPCServer):
         if end_lease:
             db_api.event_update(end_event['id'],
                                 {'status': status.event.IN_PROGRESS})
-
         with trusts.create_ctx_from_trust(lease['trust_id']) as ctx:
             reservations = lease['reservations']
 
@@ -768,7 +767,10 @@ class ManagerService(service_utils.RPCServer):
         with trusts.create_ctx_from_trust(lease['trust_id']) as ctx:
             allocations = self._existing_allocations(lease['reservations'])
             try:
-                self.enforcement.on_end(ctx, lease, allocations)
+                resource_requests = self._get_enforcement_resources(
+                            lease, lease['reservations'])
+                self.enforcement.on_end(ctx, lease, allocations,
+                                        resource_requests)
             except Exception as e:
                 LOG.error(e)
 
