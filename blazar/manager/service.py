@@ -420,53 +420,68 @@ class ManagerService(service_utils.RPCServer):
             except db_ex.BlazarDBException:
                 with save_and_reraise_exception():
                     LOG.exception('Cannot create a lease')
-            else:
-                # check enforcement only after the lease_id
-                # has been created
-                try:
-                    lease_values['id'] = lease['id']
-                    resource_requests = self._get_enforcement_resources(
-                        lease_values, reservations)
-                    self.enforcement.check_create(
-                        context.current(), lease_values, reservations,
-                        allocations, resource_requests)
-                except common_ex.NotAuthorized as e:
+
+            # check enforcement only after the lease_id
+            # has been created
+            try:
+                lease_values['id'] = lease['id']
+                resource_requests = self._get_enforcement_resources(
+                    lease_values, reservations)
+                self.enforcement.check_create(
+                    context.current(), lease_values, reservations,
+                    allocations, resource_requests)
+            except common_ex.NotAuthorized as e:
+                db_api.lease_destroy(lease_id)
+                LOG.error("Enforcement checks failed. %s", str(e))
+                raise common_ex.NotAuthorized(e)
+
+            try:
+                for reservation in reservations:
+                    reservation['lease_id'] = lease['id']
+                    reservation['start_date'] = lease['start_date']
+                    reservation['end_date'] = lease['end_date']
+                    self._create_reservation(reservation)
+            except Exception:
+                with save_and_reraise_exception():
+                    LOG.exception("Failed to create reservation for a "
+                                  "lease. Rollback the lease and "
+                                  "associated reservations")
                     db_api.lease_destroy(lease_id)
-                    LOG.error("Enforcement checks failed. %s", str(e))
-                    raise common_ex.NotAuthorized(e)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
 
-                try:
-                    for reservation in reservations:
-                        reservation['lease_id'] = lease['id']
-                        reservation['start_date'] = lease['start_date']
-                        reservation['end_date'] = lease['end_date']
-                        self._create_reservation(reservation)
-                except Exception:
-                    with save_and_reraise_exception():
-                        LOG.exception("Failed to create reservation for a "
-                                      "lease. Rollback the lease and "
-                                      "associated reservations")
-                        db_api.lease_destroy(lease_id)
+            try:
+                for event in events:
+                    event['lease_id'] = lease['id']
+                    db_api.event_create(event)
+            except (exceptions.UnsupportedResourceType,
+                    common_ex.BlazarException):
+                with save_and_reraise_exception():
+                    LOG.exception("Failed to create event for a lease. "
+                                  "Rollback the lease and associated "
+                                  "reservations")
+                    db_api.lease_destroy(lease_id)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
 
-                try:
-                    for event in events:
-                        event['lease_id'] = lease['id']
-                        db_api.event_create(event)
-                except (exceptions.UnsupportedResourceType,
-                        common_ex.BlazarException):
-                    with save_and_reraise_exception():
-                        LOG.exception("Failed to create event for a lease. "
-                                      "Rollback the lease and associated "
-                                      "reservations")
-                        db_api.lease_destroy(lease_id)
+            db_api.lease_update(
+                lease_id,
+                {'status': status.lease.PENDING})
+            lease = db_api.lease_get(lease_id)
+            self._send_notification(lease, ctx, events=['create'])
+            return lease
 
-                else:
-                    db_api.lease_update(
-                        lease_id,
-                        {'status': status.lease.PENDING})
-                    lease = db_api.lease_get(lease_id)
-                    self._send_notification(lease, ctx, events=['create'])
-                    return lease
+    def _call_enforcement_on_end(self, ctx, lease, reservations, allocations):
+        # allow external enforcement know create reservation failed
+        try:
+            resource_requests = self._get_enforcement_resources(
+                lease, reservations)
+            self.enforcement.on_end(ctx, lease, allocations,
+                                    resource_requests)
+        except Exception as e:
+            LOG.error(e)
 
     def _add_resource_type(self, reservations, existing_reservations):
         rsvns_by_id = {}
