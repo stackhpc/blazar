@@ -447,6 +447,9 @@ class ManagerService(service_utils.RPCServer):
                                   "lease. Rollback the lease and "
                                   "associated reservations")
                     db_api.lease_destroy(lease_id)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
 
             try:
                 for event in events:
@@ -459,6 +462,9 @@ class ManagerService(service_utils.RPCServer):
                                   "Rollback the lease and associated "
                                   "reservations")
                     db_api.lease_destroy(lease_id)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
 
             db_api.lease_update(
                 lease_id,
@@ -466,6 +472,16 @@ class ManagerService(service_utils.RPCServer):
             lease = db_api.lease_get(lease_id)
             self._send_notification(lease, ctx, events=['create'])
             return lease
+
+    def _call_enforcement_on_end(self, ctx, lease, reservations, allocations):
+        # allow external enforcement know create reservation failed
+        try:
+            resource_requests = self._get_enforcement_resources(
+                lease, reservations)
+            self.enforcement.on_end(ctx, lease, allocations,
+                                    resource_requests)
+        except Exception as e:
+            LOG.error(e)
 
     def _add_resource_type(self, reservations, existing_reservations):
         rsvns_by_id = {}
