@@ -515,6 +515,27 @@ class ServiceTestCase(tests.DBTestCase):
             notifier_api.format_lease_payload(lease),
             'lease.create')
 
+    def test_create_lease_dry_run(self):
+        lease_values = self.lease_values.copy()
+        del lease_values['id']
+        lease_values['dry_run'] = True
+        resources = {
+            "CUSTOM_FAKE": 3, "VCPU": 1
+        }
+        self.fake_plugin.get_enforcement_resources.return_value = resources
+        self.lease_create.return_value = self.lease
+
+        result = self.manager.create_lease(lease_values)
+
+        self.assertIsNone(result)
+        self.enforcement.check_create.assert_called_once_with(
+            self.context.current(), lease_values, mock.ANY, mock.ANY,
+            resources
+        )
+        self.trust_ctx.assert_called_once_with(self.lease_values['trust_id'])
+        self.lease_create.assert_not_called()
+        self.fake_notifier.assert_not_called()
+
     def test_create_lease_some_time(self):
         lease_values = self.lease_values.copy()
         self.lease['start_date'] = '2026-11-13 13:13'

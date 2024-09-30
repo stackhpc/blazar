@@ -408,6 +408,20 @@ class ManagerService(service_utils.RPCServer):
                 self._update_before_end_event_date(event, before_end_date,
                                                    lease_values)
 
+            # Exit early if this was just a dry run
+            if lease_values.get("dry_run", False):
+                resource_requests = self._get_enforcement_resources(
+                    lease_values, reservations)
+                # Make sure enforcement is happy with the request
+                self.enforcement.check_create(
+                    context.current(), lease_values, reservations,
+                    allocations, resource_requests)
+                # Tell the exteral system we change our mind
+                self._call_enforcement_on_end(
+                    context.current(), lease_values, reservations,
+                    allocations)
+                return None
+
             try:
                 if trust_id:
                     lease_values.update({'trust_id': trust_id})
