@@ -166,7 +166,8 @@ class LeaseStatus(BaseStatus):
                 'lease_id', 'asc',
                 {'lease_id': lease_id, 'event_type': event_type}
             )
-            if event['status'] not in COMBINATIONS[status][event_type]:
+            LOG.debug('event: %s - status: %s - event_type: %s', event, status, event_type)
+            if event.get('status') not in COMBINATIONS.get(status, {}).get(event_type, {}):
                 return False
 
         return True
