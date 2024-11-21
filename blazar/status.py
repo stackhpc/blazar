@@ -167,7 +167,7 @@ class LeaseStatus(BaseStatus):
                 {'lease_id': lease_id, 'event_type': event_type}
             )
             LOG.debug('event: %s - status: %s - event_type: %s', event, status, event_type)
-            if event and event.get('status') not in COMBINATIONS.get(status, {}).get(event_type, {}):
+            if not event or event.get('status') not in COMBINATIONS.get(status, {}).get(event_type, {}):
                 return False
 
         return True
