@@ -1,0 +1,20 @@
+---
+name: Upstream Sync
+'on':
+  schedule:
+    - cron: "15 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  synchronise-2025-1:
+    name: Synchronise 2025.1
+    uses: stackhpc/.github/.github/workflows/upstream-sync.yml@main
+    with:
+      release_series: 2025.1
+  synchronise-master:
+    name: Synchronise master
+    uses: stackhpc/.github/.github/workflows/upstream-sync.yml@main
+    with:
+      release_series: master
