@@ -378,12 +378,6 @@ class ManagerService(service_utils.RPCServer):
 
             allocations = self._allocation_candidates(
                 lease_values, reservations)
-            try:
-                self.enforcement.check_create(
-                    context.current(), lease_values, reservations, allocations)
-            except common_ex.NotAuthorized as e:
-                LOG.error("Enforcement checks failed. %s", str(e))
-                raise common_ex.NotAuthorized(e)
 
             events.append({'event_type': 'start_lease',
                            'time': start_date,
@@ -415,6 +409,20 @@ class ManagerService(service_utils.RPCServer):
                 self._update_before_end_event_date(event, before_end_date,
                                                    lease_values)
 
+            # Exit early if this was just a dry run
+            if lease_values.get("dry_run", False):
+                resource_requests = self._get_enforcement_resources(
+                    lease_values, reservations)
+                # Make sure enforcement is happy with the request
+                self.enforcement.check_create(
+                    context.current(), lease_values, reservations,
+                    allocations, resource_requests)
+                # Tell the exteral system we change our mind
+                self._call_enforcement_on_end(
+                    context.current(), lease_values, reservations,
+                    allocations)
+                return None
+
             try:
                 if trust_id:
                     lease_values.update({'trust_id': trust_id})
@@ -427,39 +435,68 @@ class ManagerService(service_utils.RPCServer):
             except db_ex.BlazarDBException:
                 with save_and_reraise_exception():
                     LOG.exception('Cannot create a lease')
-            else:
-                try:
-                    for reservation in reservations:
-                        reservation['lease_id'] = lease['id']
-                        reservation['start_date'] = lease['start_date']
-                        reservation['end_date'] = lease['end_date']
-                        self._create_reservation(reservation)
-                except Exception:
-                    with save_and_reraise_exception():
-                        LOG.exception("Failed to create reservation for a "
-                                      "lease. Rollback the lease and "
-                                      "associated reservations")
-                        db_api.lease_destroy(lease_id)
 
-                try:
-                    for event in events:
-                        event['lease_id'] = lease['id']
-                        db_api.event_create(event)
-                except (exceptions.UnsupportedResourceType,
-                        common_ex.BlazarException):
-                    with save_and_reraise_exception():
-                        LOG.exception("Failed to create event for a lease. "
-                                      "Rollback the lease and associated "
-                                      "reservations")
-                        db_api.lease_destroy(lease_id)
+            # check enforcement only after the lease_id
+            # has been created
+            try:
+                lease_values['id'] = lease['id']
+                resource_requests = self._get_enforcement_resources(
+                    lease_values, reservations)
+                self.enforcement.check_create(
+                    context.current(), lease_values, reservations,
+                    allocations, resource_requests)
+            except common_ex.NotAuthorized as e:
+                db_api.lease_destroy(lease_id)
+                LOG.error("Enforcement checks failed. %s", str(e))
+                raise common_ex.NotAuthorized(e)
 
-                else:
-                    db_api.lease_update(
-                        lease_id,
-                        {'status': status.lease.PENDING})
-                    lease = db_api.lease_get(lease_id)
-                    self._send_notification(lease, ctx, events=['create'])
-                    return lease
+            try:
+                for reservation in reservations:
+                    reservation['lease_id'] = lease['id']
+                    reservation['start_date'] = lease['start_date']
+                    reservation['end_date'] = lease['end_date']
+                    self._create_reservation(reservation)
+            except Exception:
+                with save_and_reraise_exception():
+                    LOG.exception("Failed to create reservation for a "
+                                  "lease. Rollback the lease and "
+                                  "associated reservations")
+                    db_api.lease_destroy(lease_id)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
+
+            try:
+                for event in events:
+                    event['lease_id'] = lease['id']
+                    db_api.event_create(event)
+            except (exceptions.UnsupportedResourceType,
+                    common_ex.BlazarException):
+                with save_and_reraise_exception():
+                    LOG.exception("Failed to create event for a lease. "
+                                  "Rollback the lease and associated "
+                                  "reservations")
+                    db_api.lease_destroy(lease_id)
+                    self._call_enforcement_on_end(
+                        context.current(), lease_values, reservations,
+                        allocations)
+
+            db_api.lease_update(
+                lease_id,
+                {'status': status.lease.PENDING})
+            lease = db_api.lease_get(lease_id)
+            self._send_notification(lease, ctx, events=['create'])
+            return lease
+
+    def _call_enforcement_on_end(self, ctx, lease, reservations, allocations):
+        # allow external enforcement know create reservation failed
+        try:
+            resource_requests = self._get_enforcement_resources(
+                lease, reservations)
+            self.enforcement.on_end(ctx, lease, allocations,
+                                    resource_requests)
+        except Exception as e:
+            LOG.error(e)
 
     def _add_resource_type(self, reservations, existing_reservations):
         rsvns_by_id = {}
@@ -573,10 +610,17 @@ class ManagerService(service_utils.RPCServer):
                 new_allocs = existing_allocs
 
             try:
-                self.enforcement.check_update(context.current(), lease, values,
-                                              existing_allocs, new_allocs,
+                current_resource_requests = self._get_enforcement_resources(
+                    values, existing_reservations)
+                new_resource_requests = self._get_enforcement_resources(
+                    values, new_reservations)
+                self.enforcement.check_update(context.current(), lease,
+                                              values, existing_allocs,
+                                              new_allocs,
                                               existing_reservations,
-                                              new_reservations)
+                                              new_reservations,
+                                              current_resource_requests,
+                                              new_resource_requests)
             except common_ex.NotAuthorized as e:
                 LOG.error("Enforcement checks failed. %s", str(e))
                 raise e
@@ -693,7 +737,10 @@ class ManagerService(service_utils.RPCServer):
                 # lease is no longer in play.
                 allocations = self._existing_allocations(reservations)
                 try:
-                    self.enforcement.on_end(ctx, lease, allocations)
+                    resource_requests = self._get_enforcement_resources(
+                        lease, reservations)
+                    self.enforcement.on_end(ctx, lease, allocations,
+                                            resource_requests)
                 except Exception as e:
                     LOG.error(e)
 
@@ -727,7 +774,10 @@ class ManagerService(service_utils.RPCServer):
         with trusts.create_ctx_from_trust(lease['trust_id']) as ctx:
             allocations = self._existing_allocations(lease['reservations'])
             try:
-                self.enforcement.on_end(ctx, lease, allocations)
+                resource_requests = self._get_enforcement_resources(
+                    lease, lease['reservations'])
+                self.enforcement.on_end(ctx, lease, allocations,
+                                        resource_requests)
             except Exception as e:
                 LOG.error(e)
 
@@ -817,6 +867,33 @@ class ManagerService(service_utils.RPCServer):
                 plugin.get(cid) for cid in candidate_ids]
 
         return allocations
+
+    def _get_enforcement_resources(self, lease, reservations):
+        """Returns dict by resource type of reservation candidates."""
+        resources = defaultdict(int)
+
+        for reservation in reservations:
+            res = reservation.copy()
+            resource_type = reservation['resource_type']
+            res['start_date'] = lease['start_date']
+            res['end_date'] = lease['end_date']
+
+            if resource_type not in self.plugins:
+                raise exceptions.UnsupportedResourceType(
+                    resource_type=resource_type)
+
+            plugin = self.plugins.get(resource_type)
+
+            if not plugin:
+                raise common_ex.BlazarException(
+                    'Invalid plugin names are specified: %s' % resource_type)
+
+            reservation_resources = plugin.get_enforcement_resources(res)
+
+            for resource, amount in reservation_resources.items():
+                resources[resource] += amount
+
+        return resources
 
     def _existing_allocations(self, reservations):
         allocations = {}

@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from oslo_log import log as logging
+from oslo_utils import strutils
 
 from blazar import context
 from blazar.manager.leases import rpcapi as manager_rpcapi
@@ -54,6 +55,9 @@ class API(object):
         # two lines
         ctx = context.current()
         data['user_id'] = ctx.user_id
+        # TODO(johngarbutt) we need to agree a senible API!
+        data["dry_run"] = strutils.bool_from_string(
+            data.get('dry_run', "false"))
         return self.manager_rpcapi.create_lease(data)
 
     @policy.authorize('leases', 'get')

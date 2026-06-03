@@ -70,9 +70,10 @@ class FlavorPlugin(base.BasePlugin):
     def _pick_hosts(self, reservation):
         self._validate_reservation_params(reservation)
 
-        flavor_id = reservation['flavor_id']
-        resource_request, resource_traits, source_flavor = \
-            self._get_flavor_details(flavor_id)
+        source_flavor = self._get_flavor_details(reservation)
+
+        resource_request, resource_traits = \
+            self._estimate_flavor_resources(source_flavor)
 
         affinity = strutils.bool_from_string(
             reservation['affinity'], default=None)
@@ -94,6 +95,7 @@ class FlavorPlugin(base.BasePlugin):
         while len(candidates) > req_amount:
             candidates.pop()
         host_ids = [host['id'] for host in candidates]
+
         return host_ids, source_flavor
 
     def _validate_reservation_params(self, values):
@@ -116,6 +118,11 @@ class FlavorPlugin(base.BasePlugin):
         # we should be able to exclude hosts that don't match the
         # resource requests, e.g. baremetal vs virtual
         # or missing traits
+        # TODO(johngarbutt) explore supporting custom traits
+        # used to group hosts, e.g. for different types of hardware
+        # if resource_traits:
+        #    raise mgr_exceptions.NotImplemented(
+        #        error="Resource traits not supported yet")
         hosts = db_api.reservable_host_get_all_by_queries([])
 
         # find reservations for each host in our time period
@@ -235,25 +242,29 @@ class FlavorPlugin(base.BasePlugin):
         return hosts_list
 
     def _get_cached_flavor(self, instance_reservation):
-        source_flavor = instance_reservation["resource_properties"]
+        source_flavor = instance_reservation.get("resource_properties")
         if source_flavor and "OS-FLV-EXT-DATA:ephemeral" in source_flavor:
             return json.loads(source_flavor)
+
+    def _get_total_resource_request(self, instance_reservation, source_flavor):
+        request_count = instance_reservation["amount"]
+        flavor_resource_inventory, _ = \
+            self._estimate_flavor_resources(source_flavor)
+        return {
+            rc: amount * request_count
+            for rc, amount in flavor_resource_inventory.items()
+            if amount > 0
+        }
 
     def _max_usages(self, reservations):
         """For reservation list for a host, find resource high watermark."""
         def resource_usage_by_event(event):
             instance_reservation = event['reservation']['instance_reservation']
-            request_count = instance_reservation["amount"]
             source_flavor = self._get_cached_flavor(instance_reservation)
-            if source_flavor:
-                flavor_resource_inventory, _ = \
-                    self._estimate_flavor_resources(source_flavor)
-                return {
-                    rc: amount * request_count
-                    for rc, amount in flavor_resource_inventory.items()
-                    if amount > 0
-                }
-            raise mgr_exceptions.ReservationTypeConflict()
+            if not source_flavor:
+                raise mgr_exceptions.ReservationTypeConflict()
+            return self._get_total_resource_request(
+                instance_reservation, source_flavor)
 
         # Get sorted list of events for all reservations
         # that exist in the target time window
@@ -288,23 +299,14 @@ class FlavorPlugin(base.BasePlugin):
                       f"max is: {max_usage}")
         return max_usage
 
-    def _get_flavor_details(self, flavor_id):
-        # access nova using the user token,
-        # to ensure we can only see flavors they can see
+    def _get_flavor_details(self, instance_reservation):
+        flavor_id = instance_reservation['flavor_id']
         user_client = nova.NovaClientWrapper()
         flavor = user_client.nova.nova.flavors.get(flavor_id)
         source_flavor = flavor.to_dict()
         # TODO(johngarbutt): use newer api to get this above
         source_flavor["extra_specs"] = flavor.get_keys()
-        if 'links' in source_flavor.keys():
-            del source_flavor['links']
-
-        # NOTE(johngarbutt): we are only partially reproducing all the
-        # options that are available in a flavor.
-        resource_request, resource_traits = \
-            self._estimate_flavor_resources(source_flavor)
-
-        return (resource_request, resource_traits, source_flavor)
+        return source_flavor
 
     def _estimate_flavor_resources(self, source_flavor):
         resource_request = {}
@@ -360,6 +362,7 @@ class FlavorPlugin(base.BasePlugin):
             'affinity': None,
             'resource_properties': json.dumps(source_flavor)
         }
+        LOG.debug(f"instance_reservation_val {instance_reservation_val}")
         instance_reservation = db_api.instance_reservation_create(
             instance_reservation_val)
 
@@ -451,3 +454,13 @@ class FlavorPlugin(base.BasePlugin):
 
     def on_end(self, resource_id):
         self._instance_plugin.on_end(resource_id)
+
+    def get_enforcement_resources(self, reservation_values):
+        source_flavor = self._get_cached_flavor(reservation_values)
+        if not source_flavor:
+            # when called before writing to db, fetch flavor again
+            source_flavor = self._get_flavor_details(reservation_values)
+        if not source_flavor:
+            raise mgr_exceptions.ReservationTypeConflict()
+        return self._get_total_resource_request(
+            reservation_values, source_flavor)

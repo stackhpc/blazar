@@ -488,11 +488,22 @@ class ServiceTestCase(tests.DBTestCase):
         self.lease_list.assert_called_once_with()
 
     def test_create_lease_now(self):
-        lease_values = self.lease_values
+        lease_values = self.lease_values.copy()
+        del lease_values['id']
+        resources = {
+            "CUSTOM_FAKE": 3, "VCPU": 1
+        }
+        self.fake_plugin.get_enforcement_resources.return_value = resources
+        self.lease_create.return_value = self.lease
+
         lease = self.manager.create_lease(lease_values)
 
-        self.enforcement.check_create.assert_called_once()
-
+        lease_values_extra = lease_values.copy()
+        lease_values_extra['id'] = self.lease['id']
+        self.enforcement.check_create.assert_called_once_with(
+            self.context.current(), lease_values_extra, mock.ANY, mock.ANY,
+            resources
+        )
         self.trust_ctx.assert_called_once_with(lease_values['trust_id'])
         self.lease_create.assert_called_once_with(lease_values)
         self.assertEqual(lease, self.lease)
@@ -502,6 +513,27 @@ class ServiceTestCase(tests.DBTestCase):
             expected_context.__enter__.return_value,
             notifier_api.format_lease_payload(lease),
             'lease.create')
+
+    def test_create_lease_dry_run(self):
+        lease_values = self.lease_values.copy()
+        del lease_values['id']
+        lease_values['dry_run'] = True
+        resources = {
+            "CUSTOM_FAKE": 3, "VCPU": 1
+        }
+        self.fake_plugin.get_enforcement_resources.return_value = resources
+        self.lease_create.return_value = self.lease
+
+        result = self.manager.create_lease(lease_values)
+
+        self.assertIsNone(result)
+        self.enforcement.check_create.assert_called_once_with(
+            self.context.current(), lease_values, mock.ANY, mock.ANY,
+            resources
+        )
+        self.trust_ctx.assert_called_once_with(self.lease_values['trust_id'])
+        self.lease_create.assert_not_called()
+        self.fake_notifier.assert_not_called()
 
     def test_create_lease_some_time(self):
         lease_values = self.lease_values.copy()
@@ -768,6 +800,7 @@ class ServiceTestCase(tests.DBTestCase):
 
     def test_create_lease_with_filter_exception(self):
         lease_values = self.lease_values.copy()
+        self.lease_create.return_value = self.lease
 
         self.enforcement.check_create.side_effect = (
             enforcement_ex.MaxLeaseDurationException(lease_duration=200,
@@ -776,7 +809,8 @@ class ServiceTestCase(tests.DBTestCase):
         self.assertRaises(exceptions.NotAuthorized,
                           self.manager.create_lease,
                           lease_values=lease_values)
-        self.lease_create.assert_not_called()
+        self.assertEqual(1, self.lease_create.call_count)
+        self.lease_destroy.assert_called_once_with(self.lease["id"])
 
     def test_update_lease_completed_lease_rename(self):
         lease_values = {'name': 'renamed'}
