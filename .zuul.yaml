@@ -8,11 +8,23 @@
       - release-notes-jobs-python3
     check:
       jobs:
-        - blazar-tempest-plugin-base
-        - blazar-tempest-plugin-ipv6-only
+        - blazar-tempest-plugin-base:
+            irrelevant-files: &irrelevant-files
+              - ^\.gitignore$
+              - ^\.gitireview$
+              - ^.*\.rst$
+              - ^api-ref/.*$
+              - ^doc/.*$
+              - ^releasenotes/.*$
+              - ^blazar/tests/.*$
+              - ^tox\.ini$
+        - blazar-tempest-plugin-ipv6-only:
+            irrelevant-files: *irrelevant-files
         - openstack-tox-pylint:
             voting: false
     gate:
       jobs:
-        - blazar-tempest-plugin-base
-        - blazar-tempest-plugin-ipv6-only
+        - blazar-tempest-plugin-base:
+            irrelevant-files: *irrelevant-files
+        - blazar-tempest-plugin-ipv6-only:
+            irrelevant-files: *irrelevant-files
