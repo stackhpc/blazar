@@ -24,7 +24,6 @@ from oslo_service import service
 
 gettext.install('blazar')
 
-from blazar.db import api as db_api
 from blazar.manager import service as manager_service
 from blazar.notification import notifier
 from blazar.utils import service as service_utils
@@ -33,7 +32,6 @@ from blazar.utils import service as service_utils
 def main():
     cfg.CONF(project='blazar', prog='blazar-manager')
     service_utils.prepare_service(sys.argv)
-    db_api.setup_db()
     notifier.init()
     service.launch(
         cfg.CONF,
