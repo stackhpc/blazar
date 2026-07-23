@@ -1,0 +1,13 @@
+---
+upgrade:
+  - |
+    ``blazar-manager`` no longer creates database tables at startup. The
+    database schema is now managed exclusively by Alembic migrations.
+    Operators must run ``blazar-db-manage --config-file <conf> upgrade head``
+    before starting ``blazar-manager`` on a new deployment (as is already done
+    for DevStack-based installs). Existing deployments are unaffected.
+fixes:
+  - |
+    Removed the implicit ``db_api.setup_db()`` call from ``blazar-manager``,
+    which could race with Alembic migrations during deploys or restarts and
+    leave the database in an inconsistent state.

@@ -134,6 +134,14 @@ Then edit the database section of */etc/blazar/blazar.conf*:
 
 ..
 
+Then create the Blazar database schema by running the migrations:
+
+.. sourcecode:: console
+
+    blazar-db-manage --config-file /etc/blazar/blazar.conf upgrade head
+
+..
+
 To start Blazar services use:
 
 .. sourcecode:: console
