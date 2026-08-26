@@ -643,6 +643,7 @@ class SQLAlchemyDBApiTestCase(tests.DBTestCase):
         db_api.host_extra_capability_create(
             _get_fake_host_extra_capabilities(id='1', computehost_id='1'))
         res = db_api.host_extra_capability_get_all_per_name('1', 'vgpu')
+        self.assertEqual('2', res[0][0]['capability_value'])
         self.assertEqual(1, len(res))
         self.assertEqual([],
                          db_api.host_extra_capability_get_all_per_name('1',

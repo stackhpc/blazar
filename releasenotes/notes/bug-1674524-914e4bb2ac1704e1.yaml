@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Fix deletion of host extra capabilities. Specifying a value of ``None``
+    (``null`` in JSON) when updating host capabilities will now remove the
+    capability.
+    `LP#1674524 <https://bugs.launchpad.net/blazar/+bug/1674524>`__
